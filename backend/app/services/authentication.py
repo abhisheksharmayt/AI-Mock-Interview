@@ -9,7 +9,7 @@ from app.schemas.auth import TokenData
 from app.db.database import get_db_session
 from app.repositories.user import UserRepository
 from sqlalchemy.ext.asyncio import AsyncSession
-import logging
+from loguru import logger
 
 
 SECRET_KEY = "fc95ab58b98cef40a2410f514ed361c259148d00421f95d7a97f5e1e61239c88"
@@ -38,14 +38,14 @@ class AuthenticationService:
         try:
             user = await self.user_repo.get_user_by_email(email)
             if not user:
-                logging.error(f"User not found: {email}")
+                logger.error(f"User not found: {email}")
                 raise HTTPException(status_code=401, detail="Incorrect email or password")
             if not self.verify_password(password, user.password_hash):
-                    logging.error(f"Incorrect password: {email}")
+                    logger.error(f"Incorrect password: {email}")
                     raise HTTPException(status_code=401, detail="Incorrect email or password")
             return user
         except Exception as e:
-            logging.error(f"Error while authenticating user: {e}")
+            logger.error(f"Error while authenticating user: {e}")
             raise Exception(f"Error while authenticating user: {e}")
 
     def create_access_token(self, data: dict, expires_delta: timedelta | None = None):
@@ -73,8 +73,7 @@ class AuthenticationService:
         except InvalidTokenError:
             raise credentials_exception
         user = await self.user_repo.get_user_by_email(token_data.email)
-        logging.info(f"User retrieved successfully: {user.email}")
-        
         if user is None:
             raise credentials_exception
+        logger.info(f"User retrieved successfully: {user.email}")
         return user

@@ -1,5 +1,5 @@
-import logging
 from sqlalchemy.ext.asyncio import AsyncSession
+from loguru import logger
 from app.schemas.user import UserCreate
 from app.models.users import User
 from fastapi import HTTPException
@@ -26,12 +26,12 @@ class UserRepository:
             self.db.add(new_user)
             await self.db.commit()
             await self.db.refresh(new_user)
-            logging.info(f"User created successfully: {new_user.email}")
+            logger.info(f"User created successfully: {new_user.email}")
             return new_user
 
         except Exception as e:
             await self.db.rollback()
-            logging.error(f"Error creating user: {e}")
+            logger.error(f"Error creating user: {e}")
             raise e
 
     async def get_user_by_id(self, user_id: int):
@@ -40,13 +40,13 @@ class UserRepository:
             result = await self.db.execute(stmt)
             user = result.scalar_one_or_none()
             if user:
-                logging.info(f"User retrieved successfully: {user.id}")
+                logger.info(f"User retrieved successfully: {user.id}")
                 return user
             else:
                 raise Exception(f"User not found: {user_id}")
 
         except Exception as e:
-            logging.error(f"Error retrieving user: {e}")
+            logger.error(f"Error retrieving user: {e}")
             raise e
 
     async def get_user_by_email(self, email: str):
@@ -59,5 +59,5 @@ class UserRepository:
             else:
                 raise Exception(f"User not found: {email}")
         except Exception as e:
-            logging.error(f"Error retrieving user by email: {e}")
+            logger.error(f"Error retrieving user by email: {e}")
             raise e
