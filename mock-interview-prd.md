@@ -6,7 +6,7 @@
 
 **Document Type:** Product Requirements Document (PRD)
 
-**Primary Goal:** Build a mock interview platform that starts with resume- and JD-based AI interviews and evolves into a realtime voice interview, coaching, analytics, and integration-ready product.
+**Primary Goal:** Build a mock interview platform that starts with resume- and JD-based voice-first AI interviews, with live transcript support, and evolves into a coaching, analytics, and integration-ready product.
 
 **Intended Use of This Document:** This PRD is written to be execution-friendly. Each phase includes clear outcomes, scope, milestones, and ticket-ready implementation items so development work can be planned incrementally.
 
@@ -15,10 +15,10 @@
 Job seekers should be able to:
 - Upload their resume
 - Upload or paste a job description
-- Take a tailored mock interview
+- Take a tailored voice mock interview
 - Receive useful, structured feedback
 - Track progress over time
-- Eventually practice with voice and later with human interviewers
+- Later practice with human interviewers
 
 Organizations and external platforms should eventually be able to:
 - Integrate the interview engine through APIs
@@ -37,9 +37,9 @@ Candidates often prepare using generic question lists, which do not reflect thei
 ## 4. Product Goals
 
 ### Primary Goals
-- Deliver personalized mock interviews based on a candidate's resume and target JD
+- Deliver personalized voice mock interviews based on a candidate's resume and target JD
 - Generate structured interview reports that are useful for improvement
-- Build a system that can grow from text interviews to voice interviews
+- Build a system where voice is the primary interview mode and transcript supports scoring and review
 - Design the data model so performance can be tracked across sessions
 
 ### Secondary Goals
@@ -77,9 +77,9 @@ Candidates often prepare using generic question lists, which do not reflect thei
 ## 7. Key Product Principles
 
 - Start with a narrow but complete workflow
-- Build business logic once and reuse it across text and voice
+- Build business logic once and reuse it across voice, transcript, and later human-led sessions
 - Store structured evaluation data early
-- Treat realtime voice as an experience layer, not the core business logic
+- Treat voice as the primary experience, not an add-on
 - Keep architecture modular but avoid premature service splitting
 
 ## 8. User Journey
@@ -91,8 +91,8 @@ Candidates often prepare using generic question lists, which do not reflect thei
 4. System parses both documents
 5. System creates a personalized interview plan
 6. User starts an interview
-7. AI asks questions and follow-up questions
-8. User answers
+7. AI asks questions and follow-up questions by voice with transcript
+8. User answers by voice
 9. System stores transcript and evaluation data
 10. User sees a final report
 11. User returns later to view progress across interviews
@@ -157,7 +157,7 @@ Define a narrow v1 that is useful and implementable.
 ## Phase 1: Core MVP
 
 ### Objective
-Ship a complete text-based interview experience based on resume and JD.
+Ship a complete voice-first interview experience based on resume and JD.
 
 ### In Scope
 - auth
@@ -165,18 +165,20 @@ Ship a complete text-based interview experience based on resume and JD.
 - JD upload
 - parsing pipeline
 - interview generation
-- text-based interview UI
+- microphone input
+- STT integration
+- TTS integration
+- live transcript support
 - transcript persistence
 - final report generation
 
 ### Out of Scope
-- voice
-- realtime graphing
+- advanced voice analytics
 - external APIs
 - advanced analytics trends
 
 ### Phase Achievement
-- A candidate can complete an end-to-end personalized mock interview and receive a report
+- A candidate can complete an end-to-end personalized voice mock interview and receive a report
 
 ### Milestones
 
@@ -214,14 +216,14 @@ Ship a complete text-based interview experience based on resume and JD.
 - Persist normalized parsed data
 - Add parser job status tracking
 
-#### Milestone 1.3: Text Interview Engine
+#### Milestone 1.3: Voice Interview Engine
 **Achievement**
-- System can run a complete interview conversation using text
+- System can run a complete interview conversation using voice
 
 **Acceptance Criteria**
 - Interview session can be created
-- AI asks an opening question based on context
-- User can submit answers turn by turn
+- AI asks an opening question based on context with audio and transcript
+- User can submit answers turn by turn by voice
 - AI can ask follow-up questions
 - Interview stops after defined completion logic
 
@@ -232,6 +234,8 @@ Ship a complete text-based interview experience based on resume and JD.
 - Generate first question from resume and JD context
 - Implement follow-up question logic
 - Add session completion rules
+- Integrate microphone capture flow
+- Integrate minimum STT and TTS support
 
 #### Milestone 1.4: Reporting
 **Achievement**
@@ -247,6 +251,9 @@ Ship a complete text-based interview experience based on resume and JD.
 - Build report generation service
 - Add report retrieval endpoint
 - Create report page contract for frontend
+
+**Implementation Note**
+- Because the MVP is voice-first, the minimum required realtime, STT, and TTS work from later phases must be pulled forward into Phase 1 execution.
 
 ---
 
@@ -303,7 +310,7 @@ Move from generic feedback to structured scoring that supports analytics.
 ## Phase 3: Realtime Product Experience
 
 ### Objective
-Make interviews feel live using streaming events and stable session state.
+Harden the live interview experience using streaming events and stable session state.
 
 ### In Scope
 - WebSocket support
@@ -312,11 +319,11 @@ Make interviews feel live using streaming events and stable session state.
 - reconnect and autosave behavior
 
 ### Out of Scope
-- speech input
-- TTS output
+- advanced speech analytics
+- human interviewer support
 
 ### Phase Achievement
-- Text interviews feel like live sessions, not page refresh workflows
+- Voice interviews feel like stable live sessions, not request-response workflows
 
 ### Milestones
 
@@ -355,12 +362,12 @@ Make interviews feel live using streaming events and stable session state.
 ## Phase 4: Voice Layer
 
 ### Objective
-Add speech input and spoken interviewer responses on top of the text engine.
+Improve the quality and reliability of voice input, spoken responses, and turn management.
 
 ### In Scope
-- microphone input
-- STT integration
-- TTS integration
+- microphone input hardening
+- STT reliability improvements
+- TTS reliability improvements
 - streamed transcript
 - voice turn management
 
@@ -369,7 +376,7 @@ Add speech input and spoken interviewer responses on top of the text engine.
 - real-person interview support
 
 ### Phase Achievement
-- Candidate can complete a voice-based AI interview with transcript visibility
+- Candidate can complete a reliable voice-based AI interview with transcript visibility
 
 ### Milestones
 
@@ -637,6 +644,7 @@ Turn the platform into a reusable API product for third parties.
 ### Interview Engine
 - System must generate personalized questions
 - System must ask follow-up questions based on previous answers
+- System must support microphone input and spoken AI output for MVP
 - System must persist every interview turn
 - System must generate final report output
 
@@ -667,17 +675,17 @@ Turn the platform into a reusable API product for third parties.
 - Background jobs should be retryable
 
 ### Performance
-- Text interview interaction should feel responsive
+- Voice interview interaction should feel responsive
 - Realtime transcript updates should arrive with low visible delay
 
 ### Security
-- User files and transcripts must be stored securely
+- User files, transcripts, and audio metadata must be stored securely
 - Access to interviews and reports must be scoped to the authorized user or tenant
 - API keys must be stored and handled securely
 
 ### Maintainability
 - Business logic should be modular
-- Interview orchestration should be reusable across text and voice modes
+- Interview orchestration should be reusable across voice and transcript modes
 - Schemas should be stable and documented
 
 ## 12. Suggested MVP Tech Shape
@@ -740,7 +748,7 @@ Use this PRD to create tickets in three layers:
 ## 15. Definition of Success
 
 ### MVP Success
-- Users can complete an end-to-end interview
+- Users can complete an end-to-end voice interview
 - Reports are useful enough that users want to retry
 - Data model is clean enough to support future analytics
 
@@ -756,7 +764,7 @@ Start execution with the following implementation order:
 - finalize Phase 0 scope in one page
 - build Phase 1 backend data model
 - build upload and parsing flow
-- build text interview orchestration
+- build voice interview orchestration
 - build report generation
 
 After that, create engineering tickets directly from Milestones 1.1 to 1.4.

@@ -8,6 +8,7 @@ from alembic import context
 from sqlmodel import SQLModel
 
 # import models so they register in metadata
+from app.models.resume import File, JobDescription, Resume  # noqa: F401
 from app.models.users import User, UserProfile
 
 

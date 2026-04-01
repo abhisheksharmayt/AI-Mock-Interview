@@ -6,8 +6,9 @@ This schema draft is designed for a FastAPI + Postgres architecture and supports
 - resume upload
 - JD upload
 - personalized interview generation
-- text and voice interviews
+- voice-first AI interviews
 - transcript storage
+- audio metadata storage
 - structured scoring
 - performance analytics
 - future human interviewer support
@@ -18,7 +19,8 @@ This is a product-oriented schema, not a final migration file. It is intended to
 ## 2. Design Principles
 
 - Use UUIDs for primary keys
-- Keep interview business logic reusable across text, voice, AI, and human-led sessions
+- Keep interview business logic reusable across voice, transcript, AI, and human-led sessions
+- Treat voice as the default interview mode and transcript as a support layer
 - Store structured outputs for analytics, not only free text
 - Separate raw session events from normalized transcript and report data
 - Add future-proofing for orgs, API keys, and webhook integrations without forcing them into MVP flows
@@ -271,7 +273,7 @@ Optional reusable config for interview types.
 | `name` | `varchar unique not null` | |
 | `description` | `text` | |
 | `interviewer_type` | `interviewer_type not null default 'ai'` | |
-| `mode` | `interview_mode not null default 'text'` | |
+| `mode` | `interview_mode not null default 'voice'` | |
 | `config_json` | `jsonb not null default '{}'` | rounds, timing, tone |
 | `is_active` | `boolean not null default true` | |
 | `created_at` | `timestamptz not null default now()` | |
@@ -289,7 +291,7 @@ Primary interview session record.
 | `job_description_id` | `uuid fk -> job_descriptions.id not null` | |
 | `template_id` | `uuid fk -> interview_templates.id` | optional |
 | `status` | `interview_status not null default 'draft'` | |
-| `mode` | `interview_mode not null default 'text'` | |
+| `mode` | `interview_mode not null default 'voice'` | |
 | `interviewer_type` | `interviewer_type not null default 'ai'` | |
 | `title` | `varchar` | e.g. Backend Engineer Mock Interview |
 | `interview_context_json` | `jsonb not null default '{}'` | resume + JD summary context |
@@ -637,13 +639,13 @@ These can be added later, but the schema should anticipate them.
 - `resumes` 1 -> 1 `parsed_resumes`
 - `job_descriptions` 1 -> 1 `parsed_job_descriptions`
 - `interview_sessions` 1 -> many `interview_turns`
+- `interview_sessions` 1 -> many `transcript_chunks`
+- `interview_sessions` 1 -> many `audio_assets`
 - `interview_sessions` 1 -> 1 `reports`
 - `interview_sessions` 1 -> many `evaluations`
 
 ### Future-facing relationships
 - `interview_sessions` 1 -> many `session_participants`
-- `interview_sessions` 1 -> many `transcript_chunks`
-- `interview_sessions` 1 -> many `audio_assets`
 - `organizations` 1 -> many `api_keys`
 - `organizations` 1 -> many `webhook_subscriptions`
 
@@ -661,14 +663,14 @@ If you want to stay lean initially, build these tables first:
 - `interview_sessions`
 - `session_participants`
 - `interview_turns`
+- `transcript_chunks`
+- `audio_assets`
 - `evaluations`
 - `reports`
 
 You can defer these until later:
 
 - `session_events`
-- `transcript_chunks`
-- `audio_assets`
 - `skills`
 - `session_questions`
 - `analytics_snapshots`
@@ -695,15 +697,15 @@ You can defer these until later:
 - `interview_sessions`
 - `session_participants`
 - `interview_turns`
+- `transcript_chunks`
+- `audio_assets`
 
 ### Step 4: Evaluation and report
 - `evaluations`
 - `reports`
 
-### Step 5: Realtime and voice
+### Step 5: Realtime and voice hardening
 - `session_events`
-- `transcript_chunks`
-- `audio_assets`
 
 ### Step 6: Analytics and integrations
 - `skills`
@@ -749,14 +751,17 @@ For the first build, I would create these migrations first:
 8. `interview_sessions`
 9. `session_participants`
 10. `interview_turns`
-11. `evaluations`
-12. `reports`
+11. `transcript_chunks`
+12. `audio_assets`
+13. `evaluations`
+14. `reports`
 
 This is enough to support:
 - auth
 - uploads
 - parsing
-- text interviews
+- voice interviews
 - transcript storage
+- audio metadata storage
 - final reports
 - structured scoring

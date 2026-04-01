@@ -2,7 +2,7 @@
 
 ## Product Goal
 
-Build an AI mock interview platform that starts with resume- and JD-based mock interviews, then evolves into a realtime voice product with long-term performance tracking, coaching insights, and eventually human interviewer support.
+Build an AI mock interview platform that starts with resume- and JD-based voice-first interviews with live transcript support, then evolves into stronger coaching, long-term performance tracking, and eventually human interviewer support.
 
 ## Phase 0: Product Definition
 
@@ -19,7 +19,8 @@ Build an AI mock interview platform that starts with resume- and JD-based mock i
 - Freeze v1 scope:
   - resume upload
   - JD upload
-  - text-based mock interview
+  - voice-first mock interview
+  - live transcript
   - final feedback report
 
 **Output of this phase**
@@ -29,7 +30,7 @@ Build an AI mock interview platform that starts with resume- and JD-based mock i
 
 ## Phase 1: Core MVP
 
-**Goal:** Make the mock interview engine work end to end with a text-based interview.
+**Goal:** Make the mock interview engine work end to end with a voice-first interview.
 
 **Build**
 - User authentication
@@ -37,7 +38,10 @@ Build an AI mock interview platform that starts with resume- and JD-based mock i
 - JD upload
 - Resume and JD parsing pipeline
 - Interview session creation
-- Text chat interview UI
+- Microphone input flow
+- Speech-to-text pipeline
+- Text-to-speech response pipeline
+- Live transcript support
 - Backend-generated interview questions
 - Follow-up questions based on previous answers
 - Transcript storage
@@ -57,13 +61,16 @@ Build an AI mock interview platform that starts with resume- and JD-based mock i
   - improvement areas
 
 **Deliverable**
-- A user can upload a resume and JD, complete one full text interview, and receive a useful report
+- A user can upload a resume and JD, complete one full voice interview, and receive a useful report
 
 **Do not build yet**
-- Voice interview
+- Advanced voice analytics
 - Sentiment graph
 - Human interviewer mode
 - Third-party integration platform
+
+**Execution note**
+- Pull the minimum required realtime, STT, and TTS work forward into MVP so voice is the primary experience from day one.
 
 ## Phase 2: Structured Evaluation Layer
 
@@ -93,7 +100,7 @@ Build an AI mock interview platform that starts with resume- and JD-based mock i
 
 ## Phase 3: Realtime Product Experience
 
-**Goal:** Make the interview feel like a live session instead of a simple request-response chat.
+**Goal:** Make the live voice interview feel stable and responsive.
 
 **Build**
 - FastAPI WebSocket session channel
@@ -107,26 +114,26 @@ Build an AI mock interview platform that starts with resume- and JD-based mock i
 - A live interview experience with streamed transcript and stable session state
 
 **Note**
-- Keep the interview engine independent from the transport layer so it can work for both text and voice later
+- Keep the interview engine independent from the transport layer so it can work cleanly with voice and later human-led sessions
 
 ## Phase 4: Voice Layer
 
-**Goal:** Add speech input and spoken AI responses on top of the already working text interview engine.
+**Goal:** Improve voice reliability, turn management, and spoken response quality on top of the MVP.
 
 **Build**
-- Microphone input in the frontend
-- Speech-to-text pipeline
-- Text-to-speech response pipeline
+- Improved microphone input handling
+- Speech-to-text retry and fallback behavior
+- Text-to-speech response pipeline hardening
 - Streaming transcript updates
 - Voice turn management
 - Retry and fallback behavior for transcription failures
 
 **Product rule**
-- Voice should sit on top of the same interview engine built earlier
-- Avoid separate business logic for text interviews and voice interviews
+- Voice should use the same interview engine built earlier
+- Avoid separate business logic for voice interviews and later interaction modes
 
 **Deliverable**
-- A user can speak to the AI interviewer, hear responses, and follow the transcript in realtime
+- A user can speak to the AI interviewer, hear reliable responses, and follow the transcript in realtime
 
 ## Phase 5: Interview History and Performance Tracking
 
@@ -237,7 +244,7 @@ Build an AI mock interview platform that starts with resume- and JD-based mock i
 ## PM Notes
 
 - Start with the narrowest version that proves the product value.
-- Treat text interview support as the foundation and voice as an experience layer on top.
+- Treat voice as the foundation and transcript as a supporting layer.
 - Design the data model early for interview history, structured scoring, and analytics.
 - Avoid premature microservices.
-- Keep business logic reusable across text, voice, AI-led, and human-led interviews.
+- Keep business logic reusable across voice, transcript, AI-led, and human-led interviews.

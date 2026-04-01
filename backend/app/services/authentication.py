@@ -10,9 +10,10 @@ from app.db.database import get_db_session
 from app.repositories.user import UserRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
+import os
 
 
-SECRET_KEY = "fc95ab58b98cef40a2410f514ed361c259148d00421f95d7a97f5e1e61239c88"
+SECRET_KEY = os.getenv('JWT_SECRET_KEY', "default_secret_key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 

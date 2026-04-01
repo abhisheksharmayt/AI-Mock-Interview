@@ -71,7 +71,7 @@ Create enough clarity that engineering can execute without reworking the product
 ## 5. Phase 1: Core MVP
 
 ### Goal
-Ship a complete text-based personalized interview flow.
+Ship a complete voice-first personalized interview flow.
 
 ### Workstream A: Backend Bootstrap
 
@@ -187,6 +187,7 @@ Ship a complete text-based personalized interview flow.
 - JD association
 - Status fields
 - Start and end timestamps
+- Default mode set to voice
 
 #### `DB-006` Create interview turn table
 - Session association
@@ -239,14 +240,14 @@ Ship a complete text-based personalized interview flow.
 
 #### `BE-012` Add interview start endpoint
 - Create session
-- Return first question
+- Return first question and voice session configuration
 
 #### `BE-013` Add interview answer endpoint
-- Save user answer
+- Save user answer transcript or audio reference
 - Return next question
 
 #### `BE-014` Add interview session detail endpoint
-- Return transcript and session metadata
+- Return transcript, audio metadata, and session metadata
 
 #### `BE-015` Add final report endpoint
 - Return generated report
@@ -255,8 +256,11 @@ Ship a complete text-based personalized interview flow.
 - User can authenticate
 - User can upload resume and JD
 - Resume and JD are parsed into normalized structures
-- User can complete a text interview
+- User can complete a voice interview
 - User can retrieve a final report
+
+**Execution Note**
+- Because the product is voice-first, pull the minimum required realtime and voice tasks from Phases 3 and 4 into MVP execution.
 
 ## 6. Phase 2: Structured Evaluation Layer
 
@@ -313,7 +317,7 @@ Make interview output measurable and comparable.
 ## 7. Phase 3: Realtime Product Experience
 
 ### Goal
-Move from synchronous text flow to a live session experience.
+Harden the live session experience for voice interviews.
 
 ### Workstream A: Realtime Infrastructure
 
@@ -357,7 +361,7 @@ Move from synchronous text flow to a live session experience.
 ## 8. Phase 4: Voice Layer
 
 ### Goal
-Add voice input and spoken AI output.
+Improve voice input and spoken AI output reliability.
 
 ### Workstream A: Speech Input
 
@@ -641,18 +645,18 @@ Expose the system as an integration-ready product.
 4. `AI-001` to `AI-005`
 5. `DB-005` to `DB-007`
 6. `AI-006` to `AI-011`
-7. `BE-012` to `BE-015`
-8. `DB-008` to `DB-010`
-9. `AI-012` to `AI-015`
-10. `BE-016`
+7. `RT-001` to `RT-005`
+8. `VO-001` to `VO-008`
+9. `BE-012` to `BE-015`
+10. `DB-008` to `DB-010`
+11. `AI-012` to `AI-015`
+12. `BE-016`
 
 ### After MVP Stabilizes
-1. `RT-001` to `RT-005`
-2. `BE-017`
-3. `VO-001` to `VO-008`
-4. `BE-018` to `BE-021`
-5. `AN-005` to `AN-008`
-6. `BE-022`
+1. `BE-017`
+2. `BE-018` to `BE-021`
+3. `AN-005` to `AN-008`
+4. `BE-022`
 
 ### Productization Later
 1. `DB-014` to `BE-025`
@@ -674,29 +678,22 @@ If you are building this mostly alone, group tickets into these execution bucket
 - `AI-001` to `AI-009`
 - `DB-005` to `DB-007`
 
-### Bucket 4: MVP API Surface
+### Bucket 4: Voice and Realtime MVP
+- `RT-001` to `RT-005`
+- `VO-001` to `VO-008`
 - `BE-012` to `BE-015`
-- `AI-010` to `AI-011`
 
 ### Bucket 5: Structured Scoring
 - `DB-008` to `DB-010`
 - `AI-012` to `AI-015`
 - `BE-016`
 
-### Bucket 6: Realtime
-- `RT-001` to `RT-005`
-- `BE-017`
-
-### Bucket 7: Voice
-- `VO-001` to `VO-008`
-- `DB-012` to `DB-013`
-
-### Bucket 8: Analytics and Coaching
-- `BE-018` to `BE-022`
+### Bucket 6: Analytics and Coaching
+- `BE-017` to `BE-022`
 - `AN-001` to `AN-008`
 - `AI-016` to `AI-017`
 
-### Bucket 9: Human and Platform Readiness
+### Bucket 7: Human and Platform Readiness
 - `DB-014` to `BE-028`
 - `PLT-005` to `PLT-016`
 
@@ -720,7 +717,7 @@ If you want to start implementation now, create these first 12 tickets:
 ## 17. Definition of Engineering Completion by Stage
 
 ### MVP Complete
-- Text interview works end to end
+- Voice interview works end to end
 - Resume and JD parsing work
 - Final report is generated and persisted
 
