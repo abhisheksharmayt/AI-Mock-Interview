@@ -22,7 +22,7 @@ class UserService:
             logger.info(f"Password hash created")
             user = await self.user_repo.create_user(user, password_hash=password_hash, created_by=1, updated_by=1)
             logger.info(f"User created successfully: {user.email}")
-            return UserResponse(user)
+            return UserResponse.model_validate(user)
         except Exception as e:
             logger.error(f"Error while creating user in service: {e}")
             raise HTTPException(
@@ -33,7 +33,7 @@ class UserService:
         try:
             user = await self.user_repo.get_user_by_email(email)
             logger.info(f"User retrieved successfully: {user.email}")
-            return UserResponse(user)
+            return UserResponse.model_validate(user)
         except Exception as e:
             logger.error(f"Error while retrieving user in service: {e}")
             raise Exception(f"Error while retrieving user: {e}")

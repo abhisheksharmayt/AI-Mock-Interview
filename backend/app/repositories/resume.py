@@ -1,8 +1,9 @@
+from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
-from app.models.resume import File, Resume
-from app.schemas.resume import FileUpload, ResumeUpload
+from app.models.resume import File, JobDescription, Resume
+from app.schemas.resume import FileUpload, JobDescriptionCreate, ResumeUpload
 
 
 class ResumeRepository:
@@ -38,4 +39,24 @@ class ResumeRepository:
         except Exception:
             await self.db.rollback()
             logger.exception("Error while creating file and resume records")
+            raise
+
+    async def create_jd(self, jd_data: JobDescriptionCreate, user_id: UUID) -> JobDescription:
+        try:
+            jd_record = JobDescription(
+                user_id=user_id,
+                title=jd_data.title,
+                company_name=jd_data.company_name,
+                raw_text=jd_data.raw_text,
+            )
+            self.db.add(jd_record)
+            await self.db.commit()
+            await self.db.refresh(jd_record)
+            logger.info(
+                "JD record created successfully: id=%s", jd_record.id,
+            )
+            return jd_record
+        except Exception:
+            await self.db.rollback()
+            logger.exception("Error while creating JD record")
             raise

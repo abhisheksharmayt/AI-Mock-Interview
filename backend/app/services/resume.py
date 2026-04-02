@@ -10,7 +10,12 @@ from app.core.dependencies import get_current_user
 from app.db.database import get_db_session
 from app.models.resume import Resume
 from app.repositories.resume import ResumeRepository
-from app.schemas.resume import FileUpload, ResumeUpload
+from app.schemas.resume import (
+    FileUpload,
+    JobDescriptionCreate,
+    JobDescriptionResponse,
+    ResumeUpload,
+)
 from app.schemas.user import UserResponse
 from app.utils.amazon_utils import AmazonUtils
 
@@ -79,3 +84,14 @@ class ResumeService:
                     del_err,
                 )
             raise
+
+    async def create_jd(self, jd_data: JobDescriptionCreate) -> JobDescriptionResponse:
+        try:
+            logger.info(f"Creating JD")
+            jd_record = await self.resume_repo.create_jd(jd_data, user_id=self.user.id)
+            logger.info(f"JD created successfully")
+            return JobDescriptionResponse.model_validate(jd_record)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error while creating JD: {e}")
