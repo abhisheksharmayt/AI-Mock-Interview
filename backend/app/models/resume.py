@@ -20,7 +20,7 @@ class File(BaseModel, table=True):
     kind: FileKind = Field(
         sa_column=Column(SAEnum(FileKind, name="file_kind", native_enum=True), nullable=False),
     )
-    storage_key: str = Field(nullable=False, sa_column=Column(String(2048), nullable=False))
+    storage_key: str = Field(sa_column=Column(String(2048), nullable=False))
     original_filename: Optional[str] = Field(default=None, sa_column=Column(String(512), nullable=True))
     mime_type: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     size_bytes: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))

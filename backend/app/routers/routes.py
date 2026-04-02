@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from app.routers.authentication import router as authentication_router
 from app.routers.user import router as user_router
+from app.routers.resume import router as resume_router
 from app.db.database import get_db_session
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
@@ -8,7 +9,7 @@ from sqlalchemy import text
 from app.services.cache import get_cache
 
 router = APIRouter()
-rest_routers = [authentication_router, user_router]
+rest_routers = [authentication_router, user_router, resume_router]
 
 @router.get("/health")
 async def health(db: AsyncSession = Depends(get_db_session)):

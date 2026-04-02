@@ -1,3 +1,4 @@
+from app.schemas.user import UserResponse
 from pwdlib import PasswordHash
 import jwt
 from jwt.exceptions import InvalidTokenError
@@ -10,15 +11,10 @@ from app.db.database import get_db_session
 from app.repositories.user import UserRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
-import os
+from app.core.configs import configs
 
-
-SECRET_KEY = os.getenv('JWT_SECRET_KEY', "default_secret_key")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 password_hash = PasswordHash.recommended()
-DUMMY_HASH = password_hash.hash("dummypassword")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
@@ -35,7 +31,7 @@ class AuthenticationService:
         return self.password_hash.hash(password)
 
 
-    async def authenticate_user(self, email: str, password: str):
+    async def authenticate_user(self, email: str, password: str) -> UserResponse:
         try:
             user = await self.user_repo.get_user_by_email(email)
             if not user:
@@ -56,25 +52,5 @@ class AuthenticationService:
         else:
             expire = datetime.now(timezone.utc) + timedelta(days=1)
         to_encode.update({"exp": expire})
-        encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+        encoded_jwt = jwt.encode(to_encode, configs.JWT_SECRET_KEY, algorithm=configs.ALGORITHM)
         return encoded_jwt
-
-    async def get_current_user(self, token: Annotated[str, Depends(oauth2_scheme)]):
-        credentials_exception = HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-        try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            email = payload.get("email")
-            if email is None:
-                raise credentials_exception
-            token_data = TokenData(email=email)
-        except InvalidTokenError:
-            raise credentials_exception
-        user = await self.user_repo.get_user_by_email(token_data.email)
-        if user is None:
-            raise credentials_exception
-        logger.info(f"User retrieved successfully: {user.email}")
-        return user

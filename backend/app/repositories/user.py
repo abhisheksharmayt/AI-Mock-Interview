@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
-from app.schemas.user import UserCreate
+from app.schemas.user import UserCreate, UserResponse
 from app.models.users import User
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -49,7 +49,7 @@ class UserRepository:
             logger.error(f"Error retrieving user: {e}")
             raise e
 
-    async def get_user_by_email(self, email: str):
+    async def get_user_by_email(self, email: str) -> UserResponse:
         try:
             stmt = select(User).where(User.email == email)
             result = await self.db.execute(stmt)

@@ -20,8 +20,12 @@ class AmazonUtils:
                 region_name=os.getenv("AWS_REGION"),
             )
 
-    def upload_file(self, file_path, bucket_name, key):
-        self.s3.upload_file(file_path, bucket_name, key)
+    def upload_file_as_object(self, data, bucket_name: str, key: str) -> None:
+        self.s3.upload_fileobj(data, bucket_name, key)
+
+    def delete_object(self, bucket_name: str, key: str) -> None:
+        """Remove an object; used to roll back uploads when DB persistence fails."""
+        self.s3.delete_object(Bucket=bucket_name, Key=key)
 
     def download_file(self, bucket_name, key, file_path):
         self.s3.download_file(bucket_name, key, file_path)
