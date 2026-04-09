@@ -143,4 +143,5 @@ class JobDescription(BaseModel, table=True):
     company_name: Optional[str] = Field(
         default=None, sa_column=Column(String(255), nullable=True)
     )
-    raw_text: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    raw_text: str = Field(sa_column=Column(Text, nullable=False))
+    role: str = Field(sa_column=Column(String(255), nullable=False))

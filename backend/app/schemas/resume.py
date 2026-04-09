@@ -20,8 +20,10 @@ class JobDescriptionCreate(BaseCreate):
     title: str
     company_name: str
     raw_text: str
+    role: str
 
 class JobDescriptionResponse(BaseResponse):
     title: str
     company_name: str
     raw_text: str
+    role: str

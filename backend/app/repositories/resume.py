@@ -46,6 +46,7 @@ class ResumeRepository:
             jd_record = JobDescription(
                 user_id=user_id,
                 title=jd_data.title,
+                role=jd_data.role,
                 company_name=jd_data.company_name,
                 raw_text=jd_data.raw_text,
             )
