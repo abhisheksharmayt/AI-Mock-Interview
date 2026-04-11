@@ -27,3 +27,25 @@ class JobDescriptionResponse(BaseResponse):
     company_name: str
     raw_text: str
     role: str
+
+class ParsedResumeCreate(BaseCreate):
+    resume_id: UUID
+    full_text: str
+    candidate_summary: str
+    total_years_experience: float
+    skills_json: list[dict]
+    experience_json: list[dict]
+    education_json: list[dict]
+    projects_json: list[dict]
+    certifications_json: list[dict]
+
+class ParsedResumeResponse(BaseResponse):
+    resume_id: UUID
+    full_text: str
+    candidate_summary: str
+    total_years_experience: float
+    skills_json: list[dict]
+    experience_json: list[dict]
+    education_json: list[dict]
+    projects_json: list[dict]
+    certifications_json: list[dict]

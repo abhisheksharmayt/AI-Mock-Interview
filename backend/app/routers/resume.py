@@ -1,5 +1,5 @@
 from app.schemas.resume import JobDescriptionCreate
-from fastapi import UploadFile, File, Depends, APIRouter, HTTPException
+from fastapi import UploadFile, File, Depends, APIRouter, HTTPException, BackgroundTasks
 from app.services.resume import ResumeService
 from loguru import logger
 
@@ -8,12 +8,13 @@ router = APIRouter(prefix="/resume", tags=["resume"])
 
 @router.post("/upload")
 async def upload_resume(
+    background_task: BackgroundTasks,
     file: UploadFile = File(),
     resume_service: ResumeService = Depends(ResumeService),
 ):
     try:
         logger.info(f"Uploading resume: {file.filename}")
-        await resume_service.upload_resume(file)
+        await resume_service.upload_resume(file, background_task)
         logger.info(f"Resume uploaded successfully")
         return {"message": "Resume uploaded successfully"}
     except HTTPException:

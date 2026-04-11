@@ -1,6 +1,6 @@
 import boto3
 import os
-
+from io import BytesIO
 
 class AmazonUtils:
 
@@ -27,5 +27,6 @@ class AmazonUtils:
         """Remove an object; used to roll back uploads when DB persistence fails."""
         self.s3.delete_object(Bucket=bucket_name, Key=key)
 
-    def download_file(self, bucket_name, key, file_path):
-        self.s3.download_file(bucket_name, key, file_path)
+    def download_file_as_bytes(self, bucket_name: str, key: str) -> bytes:
+        response = self.s3.get_object(Bucket=bucket_name, Key=key)
+        return response["Body"].read()
