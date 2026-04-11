@@ -25,3 +25,9 @@ dist/
 .DS_Store
 .vscode/
 .cursor/
+
+# Ignore non-Python assets in backend utils
+backend/app/utils/**
+!backend/app/utils/
+!backend/app/utils/**/
+!backend/app/utils/**/*.py
