@@ -30,27 +30,42 @@ Build an AI mock interview platform that starts with resume- and JD-based voice-
 
 ## Phase 1: Core MVP
 
-**Goal:** Make the mock interview engine work end to end with a voice-first interview.
+**Goal:** Make the mock interview engine work end to end with a voice-only interview.
+
+**Home screen**
+- Resume section: list of uploaded resumes shown inline on screen, with option to upload a new one (PDF or DOCX)
+- Interview Sessions section: list of past sessions; clicking one shows JD, company, role, and session details
+- Start Interview: entry point for a new session
+
+**Start Interview flow**
+- User picks a resume from their uploaded list
+- User selects an interview type (behavioral, resume-based, technical screening)
+- User pastes the job description text
+- User enters the company name and the role they are applying for
+- User starts the interview immediately — no additional setup steps
 
 **Build**
 - User authentication
-- Resume upload
-- JD upload
-- Resume and JD parsing pipeline
-- Interview session creation
-- Microphone input flow
+- Resume upload and resume list API
+- JD intake via paste (no file upload for JD in v1)
+- Company name and role fields tied to each interview session
+- Resume parsing pipeline (JD is raw text — no parsing needed)
+- Interview session creation linked to selected resume and JD
+- Interview type selection
+- Microphone input flow (voice only — no text input mode in v1)
 - Speech-to-text pipeline
 - Text-to-speech response pipeline
 - Live transcript support
 - Backend-generated interview questions
 - Follow-up questions based on previous answers
 - Transcript storage
+- Interview sessions list and detail view
 - Final report page
 
 **Backend responsibilities**
 - Extract skills, projects, and experience from the resume
-- Extract role requirements and expected skills from the JD
-- Generate an interview plan
+- Use raw JD text directly as interview context — no JD parsing step
+- Generate an interview plan using resume + JD + company + role context
 - Conduct an interview with roughly 8-15 questions
 - Save every turn in the conversation
 - Generate final feedback across:
@@ -61,16 +76,17 @@ Build an AI mock interview platform that starts with resume- and JD-based voice-
   - improvement areas
 
 **Deliverable**
-- A user can upload a resume and JD, complete one full voice interview, and receive a useful report
+- A user can upload a resume, start a voice interview for a specific company and role, complete the session, and receive a useful report. Past sessions are visible on the home screen.
 
 **Do not build yet**
+- Text or hybrid interview modes
 - Advanced voice analytics
 - Sentiment graph
 - Human interviewer mode
 - Third-party integration platform
 
 **Execution note**
-- Pull the minimum required realtime, STT, and TTS work forward into MVP so voice is the primary experience from day one.
+- Voice is the only supported interview mode in v1. Pull the minimum required STT and TTS work forward so the product is shippable from day one.
 
 ## Phase 2: Structured Evaluation Layer
 

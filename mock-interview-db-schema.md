@@ -196,19 +196,16 @@ Stores either pasted JD content or uploaded JD files.
 |---|---|---|
 | `id` | `uuid pk` | |
 | `user_id` | `uuid fk -> users.id not null` | |
-| `file_id` | `uuid fk -> files.id` | nullable if pasted text |
-| `title` | `varchar` | optional role title |
-| `company_name` | `varchar` | optional |
-| `source_url` | `text` | optional |
-| `raw_text` | `text` | use for pasted JD |
-| `parse_status` | `parse_status not null default 'pending'` | |
+| `company_name` | `varchar not null` | required — entered by user at session start |
+| `role` | `varchar not null` | required — the role the user is applying for |
+| `raw_text` | `text not null` | pasted JD content — used directly, no parsing needed |
 | `created_at` | `timestamptz not null default now()` | |
 | `updated_at` | `timestamptz not null default now()` | |
 
 **Indexes**
 - index on `user_id`
 - index on `company_name`
-- index on `parse_status`
+- index on `role`
 
 ## 7. Parsed Document Output
 
@@ -236,30 +233,6 @@ Normalized parsed resume output.
 - unique index on `resume_id`
 - gin index later on `skills_json` if needed
 
-## `parsed_job_descriptions`
-
-Normalized parsed JD output.
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `uuid pk` | |
-| `job_description_id` | `uuid fk -> job_descriptions.id unique not null` | |
-| `role_title` | `varchar` | |
-| `company_name` | `varchar` | |
-| `role_summary` | `text` | |
-| `required_skills_json` | `jsonb not null default '[]'` | |
-| `preferred_skills_json` | `jsonb not null default '[]'` | |
-| `responsibilities_json` | `jsonb not null default '[]'` | |
-| `seniority_level` | `varchar` | |
-| `location_text` | `varchar` | |
-| `compensation_json` | `jsonb not null default '{}'` | optional |
-| `parse_metadata_json` | `jsonb not null default '{}'` | |
-| `created_at` | `timestamptz not null default now()` | |
-| `updated_at` | `timestamptz not null default now()` | |
-
-**Indexes**
-- unique index on `job_description_id`
-- index on `role_title`
 
 ## 8. Interview Planning and Sessions
 
@@ -291,7 +264,8 @@ Primary interview session record.
 | `job_description_id` | `uuid fk -> job_descriptions.id not null` | |
 | `template_id` | `uuid fk -> interview_templates.id` | optional |
 | `status` | `interview_status not null default 'draft'` | |
-| `mode` | `interview_mode not null default 'voice'` | |
+| `mode` | `interview_mode not null default 'voice'` | voice only in v1 |
+| `interview_type` | `varchar not null` | e.g. behavioral, technical, resume-based |
 | `interviewer_type` | `interviewer_type not null default 'ai'` | |
 | `title` | `varchar` | e.g. Backend Engineer Mock Interview |
 | `interview_context_json` | `jsonb not null default '{}'` | resume + JD summary context |
@@ -637,7 +611,6 @@ These can be added later, but the schema should anticipate them.
 - `users` 1 -> many `job_descriptions`
 - `users` 1 -> many `interview_sessions`
 - `resumes` 1 -> 1 `parsed_resumes`
-- `job_descriptions` 1 -> 1 `parsed_job_descriptions`
 - `interview_sessions` 1 -> many `interview_turns`
 - `interview_sessions` 1 -> many `transcript_chunks`
 - `interview_sessions` 1 -> many `audio_assets`
@@ -659,7 +632,6 @@ If you want to stay lean initially, build these tables first:
 - `resumes`
 - `job_descriptions`
 - `parsed_resumes`
-- `parsed_job_descriptions`
 - `interview_sessions`
 - `session_participants`
 - `interview_turns`
@@ -691,7 +663,6 @@ You can defer these until later:
 
 ### Step 2: Parsing output
 - `parsed_resumes`
-- `parsed_job_descriptions`
 
 ### Step 3: Interview engine
 - `interview_sessions`
@@ -741,25 +712,24 @@ Reason:
 
 For the first build, I would create these migrations first:
 
-1. `users`
+1. `users` ✅
 2. `user_profiles`
-3. `files`
-4. `resumes`
-5. `job_descriptions`
-6. `parsed_resumes`
-7. `parsed_job_descriptions`
-8. `interview_sessions`
-9. `session_participants`
-10. `interview_turns`
-11. `transcript_chunks`
-12. `audio_assets`
-13. `evaluations`
-14. `reports`
+3. `files` ✅
+4. `resumes` ✅
+5. `job_descriptions` ✅ (migration update needed: add `role not null`, make `company_name not null`, drop `title`/`source_url`/`parse_status`)
+6. `parsed_resumes` ✅
+7. `interview_sessions`
+8. `session_participants`
+9. `interview_turns`
+10. `transcript_chunks`
+11. `audio_assets`
+12. `evaluations`
+13. `reports`
 
 This is enough to support:
 - auth
 - uploads
-- parsing
+- resume parsing
 - voice interviews
 - transcript storage
 - audio metadata storage

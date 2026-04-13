@@ -86,16 +86,21 @@ Candidates often prepare using generic question lists, which do not reflect thei
 
 ### Candidate Journey
 1. User signs up or logs in
-2. User uploads resume
-3. User uploads or pastes JD
-4. System parses both documents
-5. System creates a personalized interview plan
-6. User starts an interview
-7. AI asks questions and follow-up questions by voice with transcript
-8. User answers by voice
-9. System stores transcript and evaluation data
-10. User sees a final report
-11. User returns later to view progress across interviews
+2. User lands on the home screen which shows three sections:
+   - **Resume** — list of previously uploaded resumes shown inline, with an option to upload a new one (PDF or DOCX)
+   - **Interview Sessions** — list of past interview sessions; clicking one opens a detail view showing the JD, company, role, and session details
+   - **Start Interview** — call to action to begin a new session
+3. To start an interview:
+   - User picks a resume from their uploaded list
+   - User selects an interview type (e.g. behavioral, resume-based, technical screening)
+   - User pastes the job description text
+   - User enters the company name and the role they are applying for
+   - User starts the interview immediately
+4. System uses the selected resume and the provided JD to create a personalized interview plan
+5. AI conducts a voice-only interview — asks questions and follow-ups by voice with live transcript
+6. User answers by voice
+7. System stores transcript and evaluation data
+8. User sees a final report after the interview ends
 
 ## 9. Functional Scope by Phase
 
@@ -184,56 +189,61 @@ Ship a complete voice-first interview experience based on resume and JD.
 
 #### Milestone 1.1: User and File Intake
 **Achievement**
-- Users can sign up, log in, and submit resume and JD inputs
+- Users can sign up, log in, upload resumes, and see their resume list on the home screen
 
 **Acceptance Criteria**
 - User can create an account and authenticate
-- User can upload a resume file
-- User can upload or paste a JD
+- User can upload a resume file (PDF or DOCX)
+- User can see all previously uploaded resumes listed inline on the home screen
 - Uploaded files and metadata are stored successfully
 
 **Ticket Candidates**
 - Implement auth endpoints
 - Implement user model
 - Add resume upload API
-- Add JD upload or paste API
+- Add resume list API (for home screen display)
 - Add file storage integration
-- Create resume and JD DB tables
+- Create resume DB tables
 
 #### Milestone 1.2: Parsing and Interview Context Creation
 **Achievement**
-- System can transform resume and JD into structured interview context
+- System can transform resume and JD inputs into a structured interview context
 
 **Acceptance Criteria**
 - Resume parsing extracts skills, experience, projects, and role history
-- JD parsing extracts responsibilities, must-have skills, and role expectations
-- System creates an interview context object for downstream interview generation
+- JD is used as raw pasted text — no parsing required
+- System creates an interview context object combining parsed resume + raw JD + company name + role + interview type
 
 **Ticket Candidates**
 - Build resume parser service
-- Build JD parser service
 - Define interview context schema
-- Persist normalized parsed data
+- Persist normalized parsed resume data
 - Add parser job status tracking
 
 #### Milestone 1.3: Voice Interview Engine
 **Achievement**
-- System can run a complete interview conversation using voice
+- System can run a complete voice-only interview conversation
 
 **Acceptance Criteria**
-- Interview session can be created
-- AI asks an opening question based on context with audio and transcript
-- User can submit answers turn by turn by voice
+- User can select a resume, choose an interview type, paste a JD, enter company name and role, and start an interview immediately
+- Interview session is created and linked to the selected resume and JD
+- AI asks an opening question based on context with audio and live transcript
+- User answers by voice only — no text input mode in v1
 - AI can ask follow-up questions
 - Interview stops after defined completion logic
+- Completed session appears in the interview sessions list on the home screen
+- Clicking a past session shows JD, company, role, and session details
 
 **Ticket Candidates**
-- Create interview session model
+- Create interview session model (voice mode only for v1)
 - Create interview turn model
+- Build session creation flow: resume picker → interview type → JD + company + role → start
 - Build interview orchestration service
 - Generate first question from resume and JD context
 - Implement follow-up question logic
 - Add session completion rules
+- Add interview sessions list API (for home screen)
+- Add interview session detail API
 - Integrate microphone capture flow
 - Integrate minimum STT and TTS support
 

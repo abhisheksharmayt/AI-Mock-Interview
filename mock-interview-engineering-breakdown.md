@@ -49,7 +49,7 @@ Create enough clarity that engineering can execute without reworking the product
 - Define migration workflow — when to create migrations, how to apply them, and how to roll back
 - **Depends on:** None
 - **Estimate:** 1 day
-- **Status:** To Do
+- **Status:** Done
 - **Acceptance Criteria:**
   - A conventions doc or README section exists covering repo layout, branching, and env var strategy
   - A new engineer can set up the project locally by following the guide without asking questions
@@ -60,7 +60,7 @@ Create enough clarity that engineering can execute without reworking the product
 - Define where interview engine logic lives and how it stays decoupled from transport (voice, WebSocket, REST)
 - **Depends on:** PLT-001
 - **Estimate:** 1 day
-- **Status:** To Do
+- **Status:** Done
 - **Acceptance Criteria:**
   - Module boundaries are documented with a clear owner for each domain
   - Interview engine logic location is decided and written down
@@ -71,7 +71,7 @@ Create enough clarity that engineering can execute without reworking the product
 - Standardize database table and column naming rules
 - **Depends on:** PLT-001
 - **Estimate:** 0.5 days
-- **Status:** To Do
+- **Status:** Done
 - **Acceptance Criteria:**
   - A reference doc exists with naming examples for API responses, WebSocket events, and DB fields
   - All existing endpoints and tables conform to the convention
@@ -82,7 +82,7 @@ Create enough clarity that engineering can execute without reworking the product
 - Define priority labels
 - **Depends on:** None
 - **Estimate:** 0.25 days
-- **Status:** To Do
+- **Status:** Done
 - **Acceptance Criteria:**
   - Labels exist in the project management tool
   - All Phase 1 tickets are labeled and assigned to the correct milestone
@@ -131,7 +131,7 @@ Ship a complete voice-first personalized interview flow.
 - Add a standard API error response format used across all endpoints
 - **Depends on:** BE-001
 - **Estimate:** 0.5 days
-- **Status:** To Do
+- **Status:** Done
 - **Acceptance Criteria:**
   - All requests are logged with method, path, and status code
   - Unhandled exceptions return a JSON error response instead of a 500 stack trace
@@ -154,7 +154,7 @@ Ship a complete voice-first personalized interview flow.
 - Add a reusable cache helper and a queue config placeholder for future Celery use
 - **Depends on:** BE-002
 - **Estimate:** 0.5 days
-- **Status:** To Do
+- **Status:** Done
 - **Acceptance Criteria:**
   - App connects to Redis on startup
   - Cache helper can get and set keys
@@ -211,13 +211,15 @@ Ship a complete voice-first personalized interview flow.
   - Foreign key constraints are enforced
 
 #### `DB-002` Create JD table
-- Create a job_descriptions table linked to user storing title, company, role, and raw text
-- JD is text-only — no file upload, no async parsing
+- Create a job_descriptions table linked to user storing company_name, role, and raw_text
+- JD is text-only input — no file upload in v1
+- company_name and role are required fields, not optional metadata
 - **Depends on:** BE-006
 - **Estimate:** 0.5 days
-- **Status:** Done
+- **Status:** Migration update needed — add `role not null`, make `company_name not null`, drop `title`/`source_url`/`parse_status`
 - **Acceptance Criteria:**
   - Table exists after migration
+  - company_name and role fields are non-nullable
   - Raw text field can hold large JD content without truncation
 
 #### `BE-009` Add resume upload endpoint
@@ -238,15 +240,15 @@ Ship a complete voice-first personalized interview flow.
   - S3 object is cleaned up if the DB insert fails
 
 #### `BE-010` Add JD create endpoint
-- `POST /api/v1/resume/jd` accepts title, company, role, and raw text
+- `POST /api/v1/resume/jd` accepts company_name, role, and raw_text (all required)
 - Save to job_descriptions table
-- Return the created JD record
+- Return the created JD record id
 - **Depends on:** DB-002
 - **Estimate:** 0.5 days
 - **Status:** Done
 - **Acceptance Criteria:**
   - Valid request creates a JD record and returns it
-  - Missing required fields return 422
+  - Missing company_name, role, or raw_text returns 422
 
 #### `BE-011` Add storage abstraction
 - Abstract S3 operations behind an `AmazonUtils` class with upload, download, and delete methods
@@ -258,17 +260,18 @@ Ship a complete voice-first personalized interview flow.
   - Files can be uploaded and downloaded via the abstraction in both local and production environments
   - Delete is called on cleanup paths without raising unhandled errors
 
-#### `BE-012` Add resume status endpoint
-- `GET /api/v1/resume/{id}` returns the resume record including current parse_status
+#### `BE-012` Add resume list and status endpoints
+- `GET /api/v1/resume` returns all resumes for the current user — used to populate the home screen resume list inline
+- `GET /api/v1/resume/{id}` returns a single resume record including current parse_status
 - Return 404 if the resume does not exist or does not belong to the current user
-- Used by the frontend to poll parse progress after upload
 - **Depends on:** BE-009
 - **Estimate:** 0.5 days
 - **Status:** To Do
 - **Acceptance Criteria:**
-  - Returns 200 with resume record including parse_status field
+  - List endpoint returns all resumes for the current user ordered by created_at desc
+  - Detail endpoint returns 200 with resume record including parse_status field
   - Returns 404 for unknown or unauthorized resume id
-  - Frontend can use this to show pending, processing, completed, or failed state
+  - Frontend uses the list to show resumes inline on the home screen
 
 ### Workstream D: Parsing Pipeline
 
@@ -281,16 +284,6 @@ Ship a complete voice-first personalized interview flow.
 - **Acceptance Criteria:**
   - Pydantic schema exists and can be validated from an OpenAI JSON response
   - Missing optional fields do not raise validation errors
-
-#### `AI-002` Define parsed JD schema
-- Define the structured output schema for a parsed JD including role title, required skills, preferred skills, responsibilities, and seniority expectation
-- JD parsing happens synchronously at create time since JD is text-only
-- **Depends on:** None
-- **Estimate:** 0.5 days
-- **Status:** To Do
-- **Acceptance Criteria:**
-  - Pydantic schema exists and validates correctly
-  - Empty or minimal JD text does not crash the parser
 
 #### `AI-003` Implement resume parsing service
 - Extract text from the uploaded file using pdfplumber for PDF and python-docx for DOCX
@@ -305,16 +298,6 @@ Ship a complete voice-first personalized interview flow.
   - parse_status is set to completed on success and failed on any error
   - No partial rows are left on failure
 
-#### `AI-004` Implement JD parsing service
-- Accept raw JD text and extract structured role requirements synchronously
-- Store result in the parsed_jd table or as a JSONB field on the JD record
-- **Depends on:** AI-002
-- **Estimate:** 1 day
-- **Status:** To Do
-- **Acceptance Criteria:**
-  - JD create endpoint triggers parsing inline before returning
-  - Structured JD data is stored and retrievable
-
 #### `DB-003` Create parsed resume table
 - Store full_text, candidate_summary, total_years_experience
 - Store skills_json, experience_json, education_json, projects_json, certifications_json as JSONB
@@ -326,15 +309,6 @@ Ship a complete voice-first personalized interview flow.
 - **Acceptance Criteria:**
   - Table exists after migration
   - Inserting a second parsed resume for the same resume_id raises a constraint error
-
-#### `DB-004` Create parsed JD storage
-- Add a parsed_data JSONB column to the job_descriptions table or create a separate parsed_jd table
-- Store normalized parser output
-- **Depends on:** DB-002
-- **Estimate:** 0.5 days
-- **Status:** To Do
-- **Acceptance Criteria:**
-  - Structured JD data can be stored and queried after parsing
 
 #### `AI-005` Add parser job orchestration
 - Trigger resume parse via FastAPI BackgroundTasks after upload
@@ -353,13 +327,15 @@ Ship a complete voice-first personalized interview flow.
 
 #### `DB-005` Create interview session table
 - Link to user, resume, and job description
-- Store session status, interview mode (defaults to voice), and start and end timestamps
+- Store session status, interview type, and start and end timestamps
+- Interview mode is voice only in v1 — no text or hybrid mode
 - **Depends on:** DB-001, DB-002
 - **Estimate:** 0.5 days
 - **Status:** To Do
 - **Acceptance Criteria:**
   - Table exists after migration
-  - Session can be linked to both a resume and a JD
+  - Session is linked to a resume, a JD, and an interview type
+  - Mode field defaults to voice and is the only supported value in v1
 
 #### `DB-006` Create interview turn table
 - Link to session with sequence order
@@ -382,14 +358,15 @@ Ship a complete voice-first personalized interview flow.
   - JSONB field stores the full structured report without truncation
 
 #### `AI-006` Define interview context schema
-- Define the context object passed to the interview engine including resume summary, JD summary, target skills, focus areas, and interview type
-- This schema is the contract between the parsing layer and the interview orchestrator
-- **Depends on:** AI-001, AI-002
+- Define the context object passed to the interview engine including parsed resume summary, raw JD text, company name, role, and interview type
+- JD is used as-is — no parsed JD object needed
+- This schema is the contract between the intake layer and the interview orchestrator
+- **Depends on:** AI-001
 - **Estimate:** 0.5 days
 - **Status:** To Do
 - **Acceptance Criteria:**
   - Context schema is defined as a Pydantic model
-  - Can be constructed from a parsed resume and a parsed JD
+  - Can be constructed from a parsed resume + raw JD text + company name + role + interview type
 
 #### `AI-007` Build interview plan generator
 - Generate an interview plan from the context object including sections, topic ordering, and estimated question counts
@@ -449,13 +426,18 @@ Ship a complete voice-first personalized interview flow.
   - Generation failure does not leave the session in an inconsistent state
 
 #### `BE-013` Add interview start endpoint
-- `POST /api/v1/interview/start` creates a new session and returns the opening question and voice session configuration
+- `POST /api/v1/interview/start` accepts resume_id, interview_type, jd (raw text), company_name, and role
+- Creates a JD record and a session record in one flow
+- Returns the session id and the opening question
+- Voice is the only supported mode — no mode parameter required from the client
 - **Depends on:** AI-008, DB-005
 - **Estimate:** 0.5 days
 - **Status:** To Do
 - **Acceptance Criteria:**
   - Returns a session id and the first question
-  - Session record is created with status=active
+  - Session record is created with status=in_progress and mode=voice
+  - Returns 422 if resume_id, interview_type, jd, company_name, or role is missing
+  - Returns 404 if the resume does not belong to the current user
 
 #### `BE-014` Add interview answer endpoint
 - `POST /api/v1/interview/{session_id}/answer` accepts the candidate's answer transcript or audio reference
@@ -468,14 +450,17 @@ Ship a complete voice-first personalized interview flow.
   - Returns the next AI question or a completion flag
   - Returns 404 for unknown or unauthorized session id
 
-#### `BE-015` Add interview session detail endpoint
-- `GET /api/v1/interview/{session_id}` returns the full transcript, audio metadata, and session metadata
+#### `BE-015` Add interview sessions list and detail endpoints
+- `GET /api/v1/interview` returns all sessions for the current user — used to populate the home screen sessions list inline
+- `GET /api/v1/interview/{session_id}` returns the full session detail: JD content, company name, role, interview type, transcript turns in sequence, and session metadata
 - **Depends on:** DB-005, DB-006
 - **Estimate:** 0.5 days
 - **Status:** To Do
 - **Acceptance Criteria:**
-  - Returns turns in sequence order
-  - Returns 404 for unknown or unauthorized session id
+  - List endpoint returns all sessions ordered by created_at desc
+  - Detail endpoint returns transcript turns in sequence order
+  - Both endpoints return 404 for unknown or unauthorized ids
+  - Detail response includes company_name, role, and jd raw text from the linked JD record
 
 #### `BE-016` Add final report endpoint
 - `GET /api/v1/interview/{session_id}/report` returns the generated report for a completed session
@@ -488,8 +473,11 @@ Ship a complete voice-first personalized interview flow.
 
 ### Exit Criteria
 - User can authenticate
-- User can upload resume and JD
+- User can upload a resume and see all uploaded resumes inline on the home screen
 - Resume is parsed into a normalized structure asynchronously
+- User can see past interview sessions inline on the home screen and click into session details
+- User can pick a resume, select an interview type, paste a JD with company name and role, and start a voice interview immediately
+- Voice is the only supported interview mode
 - User can complete a voice interview end to end
 - User can retrieve a final report
 
