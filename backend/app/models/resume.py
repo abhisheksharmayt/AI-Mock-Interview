@@ -138,10 +138,10 @@ class JobDescription(BaseModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     user_id: UUID = Field(foreign_key="user.id", nullable=False)
     title: Optional[str] = Field(
-        default=None, sa_column=Column(String(512), nullable=True)
+        default=None, sa_column=Column(String(512), nullable=False)
     )
     company_name: Optional[str] = Field(
-        default=None, sa_column=Column(String(255), nullable=True)
+        default=None, sa_column=Column(String(255), nullable=False)
     )
     raw_text: str = Field(sa_column=Column(Text, nullable=False))
     role: str = Field(sa_column=Column(String(255), nullable=False))
