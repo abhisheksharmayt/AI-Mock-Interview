@@ -159,6 +159,7 @@ Ship a complete voice-first personalized interview flow.
   - App connects to Redis on startup
   - Cache helper can get and set keys
   - Connection failure on startup raises a clear error
+- **Note:** Redis LIST operations for voice transcript buffering are extended in `RT-REDIS-001`. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) for the full approach.
 
 ### Workstream B: Auth and User Core
 
@@ -346,6 +347,7 @@ Ship a complete voice-first personalized interview flow.
 - **Acceptance Criteria:**
   - Turns can be inserted and retrieved in sequence order
   - Speaker type is enforced via an enum
+- **Note:** Turns are written to this table once per completed utterance — not per STT chunk. In-flight chunks are buffered in Redis before assembly. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — tickets `RT-REDIS-002`, `RT-REDIS-003`.
 
 #### `DB-007` Create report table
 - Link to session
@@ -383,13 +385,14 @@ Ship a complete voice-first personalized interview flow.
 - Accept a candidate answer and generate a contextual follow-up question
 - Check completion conditions after each turn
 - Keep the orchestrator decoupled from transport so it works with both voice and REST
-- **Depends on:** AI-007, DB-005, DB-006
+- **Depends on:** AI-007, DB-005, DB-006, RT-REDIS-003
 - **Estimate:** 2 days
 - **Status:** To Do
 - **Acceptance Criteria:**
   - Orchestrator produces a valid opening question from a given plan
   - Follow-up questions are contextually relevant to the previous answer
   - Session is marked complete when completion rules are met
+- **Note:** The orchestrator reads the LLM context window from Redis (`get_recent_turns`) rather than re-querying Postgres on every turn. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 4, Step 3.
 
 #### `AI-009` Add completion rules
 - Define max question count per interview
@@ -623,12 +626,13 @@ Harden the live session experience for voice interviews using streaming events a
 
 #### `RT-004` Add autosave support
 - Save partial session state after each turn so progress is not lost mid-interview
-- **Depends on:** DB-006, RT-003
+- **Depends on:** DB-006, RT-003, RT-REDIS-003
 - **Estimate:** 1 day
 - **Status:** To Do
 - **Acceptance Criteria:**
   - Each completed turn is persisted before the next question is sent
   - No turns are lost if the server restarts between turns
+- **Note:** Turn persistence is synchronous — Postgres INSERT happens immediately after utterance assembly, not deferred. Redis holds the context cache only. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 4.
 
 #### `RT-005` Add reconnect support
 - Allow a client to rejoin an active session after a disconnect
@@ -671,21 +675,23 @@ Improve voice input and spoken AI output reliability on top of the MVP foundatio
 
 #### `VO-002` Build speech ingestion interface
 - Accept audio chunks or recorded blobs associated with an interview session and turn
-- **Depends on:** VO-001, DB-006
+- **Depends on:** VO-001, DB-006, RT-REDIS-001
 - **Estimate:** 1 day
 - **Status:** To Do
 - **Acceptance Criteria:**
   - Audio can be submitted and linked to the correct session and turn
+- **Note:** Partial STT results from this interface are buffered in Redis (`interview:chunks:{session_id}`) — not written to Postgres. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 4, Step 1.
 
 #### `VO-003` Integrate STT provider
 - Convert speech input to transcript text
 - Return partial and final transcript states where the provider supports it
-- **Depends on:** VO-002
+- **Depends on:** VO-002, RT-REDIS-002
 - **Estimate:** 1.5 days
 - **Status:** To Do
 - **Acceptance Criteria:**
   - Spoken input produces a text transcript associated with the correct turn
   - Partial transcripts are surfaced to the frontend as available
+- **Note:** Partial STT results go to Redis chunk buffer. Only the final assembled text triggers a Postgres INSERT into `interview_turns`. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 4, Steps 1–2.
 
 #### `DB-012` Create transcript chunk table
 - Store transcript chunks linked to session and turn with timestamp boundaries and provider metadata
@@ -694,6 +700,7 @@ Improve voice input and spoken AI output reliability on top of the MVP foundatio
 - **Status:** To Do
 - **Acceptance Criteria:**
   - Chunks are stored with enough metadata to reconstruct the full transcript in order
+- **Note:** In MVP, in-flight STT chunks live in Redis only (`interview:chunks:{session_id}`) and are never persisted to this table during the live session. This table is for post-session audit / communication signal analysis (Phase 6). If chunk persistence during voice sessions becomes a requirement before Phase 6, revisit after `RT-REDIS-002` is stable. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 9.
 
 #### `VO-004` Add STT retry and fallback handling
 - Handle transient STT provider failures with retry logic
