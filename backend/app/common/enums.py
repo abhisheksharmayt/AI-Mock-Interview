@@ -11,3 +11,32 @@ class ParseStatus(Enum):
     processing = "processing"
     completed = "completed"
     failed = "failed"
+
+
+class InterviewStatus(Enum):
+    draft = "draft"
+    in_progress = "in_progress"
+    completed = "completed"
+    cancelled = "cancelled"
+
+
+class InterviewMode(Enum):
+    voice = "voice"
+    text = "text"
+
+
+class InterviewerType(Enum):
+    ai = "ai"
+    human = "human"
+
+
+class SpeakerType(Enum):
+    candidate = "candidate"
+    interviewer = "interviewer"
+    system = "system"
+
+
+class TurnKind(Enum):
+    question = "question"
+    answer = "answer"
+    system_event = "system_event"

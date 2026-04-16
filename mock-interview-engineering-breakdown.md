@@ -359,51 +359,58 @@ Ship a complete voice-first personalized interview flow.
   - Report can be created and retrieved by session id
   - JSONB field stores the full structured report without truncation
 
-#### `AI-006` Define interview context schema
-- Define the context object passed to the interview engine including parsed resume summary, raw JD text, company name, role, and interview type
-- JD is used as-is — no parsed JD object needed
-- This schema is the contract between the intake layer and the interview orchestrator
+#### `AI-006` Build prompt template system
+- Create one prompt template file per interview type: `behavioral.txt`, `technical.txt`, `resume_based.txt`
+- Templates use placeholder variables injected at session start: `{{candidate_name}}`, `{{role}}`, `{{company_name}}`, `{{resume_summary}}`, `{{key_skills}}`, `{{years_of_experience}}`, `{{jd_highlights}}`
+- Build a `PromptRenderer` service that accepts interview_type + context values and returns the rendered system prompt string
+- The rendered prompt is stored in `interview_sessions.interview_context_json` — not re-rendered per turn
 - **Depends on:** AI-001
+- **Estimate:** 1 day
+- **Status:** To Do
+- **Acceptance Criteria:**
+  - Three template files exist covering all supported interview types
+  - `PromptRenderer.render(interview_type, context)` returns a fully substituted prompt string
+  - Missing placeholder values raise a clear error at render time, not silently produce broken prompts
+  - Rendered prompt is stored on the session row at creation time
+- **Note:** See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 5 for full variable list and storage contract.
+
+#### `AI-007` Build interview context assembler
+- Assemble the dynamic context object from DB records: parsed resume, JD, user profile
+- Pass the context to `PromptRenderer` to produce the final system prompt
+- This is the boundary between the data layer and the LLM layer — nothing downstream should query the DB for context
+- **Depends on:** AI-006, DB-003, DB-002
 - **Estimate:** 0.5 days
 - **Status:** To Do
 - **Acceptance Criteria:**
-  - Context schema is defined as a Pydantic model
-  - Can be constructed from a parsed resume + raw JD text + company name + role + interview type
-
-#### `AI-007` Build interview plan generator
-- Generate an interview plan from the context object including sections, topic ordering, and estimated question counts
-- Plan should reflect the candidate's background and the JD requirements
-- **Depends on:** AI-006
-- **Estimate:** 1.5 days
-- **Status:** To Do
-- **Acceptance Criteria:**
-  - Given a context object, a structured plan is returned
-  - Plan includes at least 3 sections with a question count estimate per section
+  - Given a `resume_id`, `jd_id`, and `interview_type`, produces a fully rendered system prompt
+  - Fails fast with a clear error if the resume has not been parsed yet
+- **Note:** Replaces the prior plan-generation approach. No structured plan is generated upfront — the LLM drives the interview dynamically from the system prompt. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 5.
 
 #### `AI-008` Build interview session orchestrator
-- Start an interview session and generate an opening question from the interview plan
-- Accept a candidate answer and generate a contextual follow-up question
-- Check completion conditions after each turn
-- Keep the orchestrator decoupled from transport so it works with both voice and REST
+- On session start: call LLM with rendered system prompt → get opening question
+- On each candidate answer: call LLM with system prompt + last N turns from Redis → get next question or completion signal
+- Parse LLM output to detect completion signal vs next question
+- Keep the orchestrator decoupled from transport (works with both WebSocket voice and REST)
 - **Depends on:** AI-007, DB-005, DB-006, RT-REDIS-003
 - **Estimate:** 2 days
 - **Status:** To Do
 - **Acceptance Criteria:**
-  - Orchestrator produces a valid opening question from a given plan
+  - Orchestrator produces a valid opening question from the rendered system prompt
   - Follow-up questions are contextually relevant to the previous answer
-  - Session is marked complete when completion rules are met
-- **Note:** The orchestrator reads the LLM context window from Redis (`get_recent_turns`) rather than re-querying Postgres on every turn. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 4, Step 3.
+  - Completion signal from LLM is correctly parsed and triggers session close
+  - LLM context is read from Redis (`get_recent_turns`) — no Postgres query per turn
+- **Note:** Full turn cycle documented in [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 4, Phase 2.
 
-#### `AI-009` Add completion rules
-- Define max question count per interview
-- Define section completion logic — advance when enough questions are asked per topic
+#### `AI-009` Add completion guardrails
+- Enforce max turn count as a hard stop regardless of LLM completion signal
+- If max turns reached without LLM signalling completion, close the session and generate the report with what exists
 - Add a placeholder for time-based completion in a future phase
 - **Depends on:** AI-008
-- **Estimate:** 0.5 days
+- **Estimate:** 0.25 days
 - **Status:** To Do
 - **Acceptance Criteria:**
-  - Interview stops at the configured max question count
-  - Session status is updated to completed when rules are satisfied
+  - Interview stops at the configured max question count even if LLM does not signal completion
+  - Session status is updated to completed and report generation is triggered in both paths
 
 ### Workstream F: Reporting
 
@@ -430,17 +437,19 @@ Ship a complete voice-first personalized interview flow.
 
 #### `BE-013` Add interview start endpoint
 - `POST /api/v1/interview/start` accepts resume_id, interview_type, jd (raw text), company_name, and role
-- Creates a JD record and a session record in one flow
-- Returns the session id and the opening question
+- Creates a JD record, assembles context, renders system prompt, creates session row, calls LLM for opening question, runs TTS, returns result — all in one request
 - Voice is the only supported mode — no mode parameter required from the client
 - **Depends on:** AI-008, DB-005
-- **Estimate:** 0.5 days
+- **Estimate:** 1 day
 - **Status:** To Do
 - **Acceptance Criteria:**
-  - Returns a session id and the first question
-  - Session record is created with status=in_progress and mode=voice
-  - Returns 422 if resume_id, interview_type, jd, company_name, or role is missing
+  - Returns session_id, question_text, and audio_url for the opening question
+  - Session row is created with status=in_progress, mode=voice, and rendered system prompt stored in interview_context_json
+  - Opening AI turn is persisted in interview_turns before the response is returned
+  - Returns 422 if any required field is missing
   - Returns 404 if the resume does not belong to the current user
+  - Returns 409 if the resume parse_status is not completed
+- **Note:** Full bootstrap sequence documented in [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 4, Phase 1.
 
 #### `BE-014` Add interview answer endpoint
 - `POST /api/v1/interview/{session_id}/answer` accepts the candidate's answer transcript or audio reference

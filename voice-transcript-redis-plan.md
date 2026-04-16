@@ -4,7 +4,7 @@
 
 This document defines the engineering approach for storing interview transcript data during a voice session. It covers the Redis scratchpad pattern for in-flight STT chunks and the per-turn Postgres write strategy for durable transcript storage.
 
-This plan is a dependency for tickets: `DB-006`, `DB-012`, `VO-002`, `VO-003`, `RT-004`, `AI-008`
+This plan is a dependency for tickets: `DB-006`, `DB-012`, `VO-002`, `VO-003`, `RT-004`, `AI-006`, `AI-007`, `AI-008`, `AI-009`, `BE-013`
 
 ---
 
@@ -68,7 +68,153 @@ TTL: **4 hours** (sliding, refreshed on each RPUSH)
 
 ---
 
-## 4. Write Flow (Per Turn)
+## 4. Full Interview Flow (Post Session Start)
+
+### Phase 1 — Session Bootstrap (HTTP)
+
+```
+POST /api/v1/interview/start
+  { resume_id, interview_type, jd, company_name, role }
+         ↓
+1. Load parsed_resume from DB
+2. Create job_descriptions row
+3. Select prompt template by interview_type
+   (behavioral.txt / technical.txt / resume_based.txt)
+4. Inject dynamic values into template:
+   - {{candidate_name}}, {{role}}, {{company_name}}
+   - {{resume_summary}}, {{key_skills}}, {{years_of_experience}}
+   - {{jd_highlights}}
+5. Create interview_sessions row
+   - status = in_progress
+   - interview_context_json = { rendered_system_prompt, resume_summary, role, company }
+6. Call LLM (system prompt only) → opening question text
+7. TTS → convert opening question to audio
+8. INSERT AI turn → interview_turns (Postgres)
+9. RPUSH interview:turns:{session_id} (Redis cache, lazy init)
+         ↓
+Response: { session_id, question_text, audio_url }
+```
+
+---
+
+### Phase 2 — Live Voice Turn Cycle (WebSocket)
+
+WebSocket: `WS /ws/interview/{session_id}`
+
+```
+─── Candidate receives opening question audio ───
+
+CANDIDATE SPEAKS:
+  Audio chunks arrive via WebSocket
+      ↓
+  STT partial results
+      ↓
+  RPUSH interview:chunks:{session_id}        ← Redis only
+  EXPIRE interview:chunks:{session_id} 3600
+  Broadcast transcript_updated → frontend (live caption)
+      ↓
+  Silence threshold / end-of-utterance detected
+      ↓
+  LRANGE interview:chunks:{session_id} 0 -1  ← assemble final text
+  DELETE interview:chunks:{session_id}        ← reset for next turn
+      ↓
+  INSERT candidate turn → interview_turns (Postgres)
+  RPUSH interview:turns:{session_id}          ← update context cache
+  EXPIRE interview:turns:{session_id} 14400
+
+AI RESPONDS:
+      ↓
+  LRANGE interview:turns:{session_id} -6 -1  ← last 6 turns, no DB query
+      ↓
+  Call LLM (rendered system prompt + recent turns)
+      ↓
+  ┌────────────────────────────────────────┐
+  │  LLM returns next question             │ → continue turn cycle
+  │  LLM signals completion                │ → go to Phase 3
+  └────────────────────────────────────────┘
+      ↓ (next question path)
+  TTS → audio
+  INSERT AI turn → interview_turns (Postgres)
+  RPUSH interview:turns:{session_id}          ← update context cache
+  EXPIRE interview:turns:{session_id} 14400
+  Send { question_text, audio_url } via WebSocket
+      ↓
+  Repeat from CANDIDATE SPEAKS
+```
+
+---
+
+### Phase 3 — Session Close
+
+```
+LLM signals completion  OR  max turn count reached
+         ↓
+1. Send session_completed event to frontend via WebSocket
+2. UPDATE interview_sessions SET status=completed, completed_at=now()
+3. DELETE Redis keys:
+   interview:turns:{session_id}
+   interview:chunks:{session_id}
+4. Close WebSocket connection
+5. Trigger report generation (async background task)
+         ↓
+Frontend polls: GET /api/v1/interview/{session_id}/report
+```
+
+---
+
+### Safety Nets
+
+| Scenario | Handler |
+|---|---|
+| LLM never signals completion | Max turn count hard stop |
+| Candidate silent too long | Silence timeout → send reprompt event via WS |
+| WebSocket disconnects mid-session | Reconnect restores state from Postgres + Redis |
+| Redis key expires before session ends | 4hr TTL covers longest possible session; fallback to Postgres query |
+| Session left in_progress after crash | Redis TTL fires → cleanup job marks as abandoned (Phase 3) |
+
+---
+
+## 5. Prompt Template System
+
+### Template Location
+
+```
+backend/app/prompts/
+    behavioral.txt
+    technical.txt
+    resume_based.txt
+```
+
+### Template Variables
+
+Each template contains placeholders injected at session start:
+
+| Variable | Source |
+|---|---|
+| `{{candidate_name}}` | `users.full_name` |
+| `{{role}}` | `job_descriptions.role` |
+| `{{company_name}}` | `job_descriptions.company_name` |
+| `{{resume_summary}}` | `parsed_resumes.candidate_summary` |
+| `{{key_skills}}` | `parsed_resumes.skills_json` (top N) |
+| `{{years_of_experience}}` | `parsed_resumes.total_years_experience` |
+| `{{jd_highlights}}` | `job_descriptions.raw_text` (first 500 chars or LLM-extracted) |
+
+### LLM Decision Responsibility
+
+The LLM controls the interview using the rendered system prompt. It decides:
+- Which topic to cover next
+- Whether to follow up or move on
+- When the interview is complete (via a structured completion signal)
+
+Max turn count is the only hard guardrail enforced by the application — not the LLM.
+
+### Rendered Prompt Storage
+
+The final rendered system prompt is stored in `interview_sessions.interview_context_json` at session start. Every LLM call for that session uses this stored prompt — no re-rendering mid-session.
+
+---
+
+## 6. Write Flow (Per Turn)
 
 ### Step 1 — STT streaming (candidate speaks)
 
