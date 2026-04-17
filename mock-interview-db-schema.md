@@ -272,6 +272,7 @@ Primary interview session record.
 | `plan_json` | `jsonb not null default '{}'` | generated interview plan |
 | `question_count` | `int not null default 0` | |
 | `duration_seconds` | `int` | completed session duration |
+| `transcript_s3_key` | `varchar(512)` | S3 key for the session transcript JSON (`transcripts/{session_id}.json`); set at session start |
 | `started_at` | `timestamptz` | |
 | `completed_at` | `timestamptz` | |
 | `created_at` | `timestamptz not null default now()` | |
@@ -354,6 +355,8 @@ Raw event log for realtime or replay support.
 ## `transcript_chunks`
 
 Stores partial or time-bounded transcript chunks, mainly for voice mode.
+
+> **MVP note:** In-flight STT chunks during a live session are held **in-memory** in the WebSocket handler (a Python list local to the connection). They are **never** written to this table during an active session. This table is reserved for Phase 6 (post-session communication signal analysis and audit). Do not write to it before Phase 6.
 
 | Column | Type | Notes |
 |---|---|---|

@@ -159,7 +159,7 @@ Ship a complete voice-first personalized interview flow.
   - App connects to Redis on startup
   - Cache helper can get and set keys
   - Connection failure on startup raises a clear error
-- **Note:** Redis LIST operations for voice transcript buffering are extended in `RT-REDIS-001`. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) for the full approach.
+- **Note:** Redis (`set_cache`/`get_cache`) remains available for basic key/value caching. It is **not** used for transcript buffering. In-flight STT chunks are held in-memory in the WebSocket handler; completed turns are written to Postgres and S3. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) for the full transcript approach.
 
 ### Workstream B: Auth and User Core
 
@@ -274,7 +274,62 @@ Ship a complete voice-first personalized interview flow.
   - Returns 404 for unknown or unauthorized resume id
   - Frontend uses the list to show resumes inline on the home screen
 
-### Workstream D: Parsing Pipeline
+### Workstream D: S3 Transcript Storage
+
+#### `S3-TR-001` Add JSON helpers to AmazonUtils
+
+- Add `upload_json(data: dict, bucket: str, key: str) -> None` — serializes to UTF-8 JSON and uploads
+- Add `download_json(bucket: str, key: str) -> dict` — downloads and deserializes
+- **Depends on:** BE-011
+- **Estimate:** 0.25 days
+- **Status:** To Do
+- **Acceptance Criteria:**
+  - `upload_json` followed by `download_json` round-trips a dict without data loss
+  - Both methods work against MinIO in local dev and AWS S3 in production
+
+#### `S3-TR-002` Build TranscriptS3Service
+
+- `create_transcript(session_id, user_id, started_at) -> str` — creates initial JSON in S3 (`transcripts/{session_id}.json`), returns s3_key
+- `append_turn(s3_key, turn) -> None` — read-modify-write: download JSON, append turn dict, re-upload
+- `finalize_transcript(s3_key, completed_at) -> None` — download, set status=completed, re-upload
+- **Depends on:** S3-TR-001
+- **Estimate:** 0.5 days
+- **Status:** To Do
+- **Acceptance Criteria:**
+  - After `create_transcript`, downloading the S3 key returns valid JSON with an empty `turns` array
+  - Each `append_turn` adds the turn and refreshes `updated_at`
+  - `finalize_transcript` sets `status` to `completed`
+
+#### `S3-TR-003` Add transcript_s3_key to interview_sessions
+
+- Add `transcript_s3_key VARCHAR(512)` nullable column to `interview_sessions`
+- Migration: `ALTER TABLE interview_sessions ADD COLUMN transcript_s3_key VARCHAR(512);`
+- Update `InterviewSession` SQLModel with `transcript_s3_key: Optional[str]` field
+- **Depends on:** DB-005
+- **Estimate:** 0.25 days
+- **Status:** To Do
+- **Acceptance Criteria:**
+  - Column is nullable and exists after migration
+  - `transcript_s3_key` is populated on the session row immediately after `create_transcript`
+
+#### `S3-TR-004` WebSocket handler with in-memory buffer + S3 per-turn write
+
+- `WS /ws/interview/{session_id}` — authenticate via JWT, load session
+- On connect: call `TranscriptS3Service.create_transcript(...)` if `transcript_s3_key` is None
+- On `audio_chunk`: append STT partial to in-memory list, send `transcript_partial` to client
+- On utterance complete: assemble, clear buffer, INSERT Postgres, `append_turn` S3, send `transcript_final`
+- On disconnect/completion: `finalize_transcript`, update session status
+- **Depends on:** S3-TR-002, S3-TR-003, DB-006, RT-001
+- **Estimate:** 2 days
+- **Status:** To Do
+- **Acceptance Criteria:**
+  - Client receives `transcript_partial` for each STT chunk
+  - After utterance complete, Postgres and S3 both have the new turn
+  - Simulating a mid-interview disconnect and re-fetching the S3 JSON shows all completed turns
+  - Reconnecting does not duplicate turns
+- **Note:** Full flow documented in [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Sections 4 and 8.
+
+### Workstream F: Parsing Pipeline
 
 #### `AI-001` Define parsed resume schema
 - Define the structured output schema for a parsed resume including skills, experience entries, projects, education, certifications, candidate summary, and total years of experience
@@ -324,7 +379,7 @@ Ship a complete voice-first personalized interview flow.
   - parse_status reflects the correct state at each transition
   - A failed parse never leaves the resume stuck in processing state
 
-### Workstream E: Interview Context and Session Model
+### Workstream G: Interview Context and Session Model
 
 #### `DB-005` Create interview session table
 - Link to user, resume, and job description
@@ -332,22 +387,23 @@ Ship a complete voice-first personalized interview flow.
 - Interview mode is voice only in v1 — no text or hybrid mode
 - **Depends on:** DB-001, DB-002
 - **Estimate:** 0.5 days
-- **Status:** To Do
+- **Status:** Done
 - **Acceptance Criteria:**
   - Table exists after migration
   - Session is linked to a resume, a JD, and an interview type
   - Mode field defaults to voice and is the only supported value in v1
+  - `transcript_s3_key VARCHAR(512)` column exists and is nullable (set at session start, null until then)
 
 #### `DB-006` Create interview turn table
 - Link to session with sequence order
 - Store speaker type (ai or candidate), message content, and timestamp
 - **Depends on:** DB-005
 - **Estimate:** 0.5 days
-- **Status:** To Do
+- **Status:** Done
 - **Acceptance Criteria:**
   - Turns can be inserted and retrieved in sequence order
   - Speaker type is enforced via an enum
-- **Note:** Turns are written to this table once per completed utterance — not per STT chunk. In-flight chunks are buffered in Redis before assembly. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — tickets `RT-REDIS-002`, `RT-REDIS-003`.
+- **Note:** Turns are written to this table once per completed utterance — not per STT chunk. In-flight chunks are held in-memory in the WebSocket handler and never hit the DB. After each INSERT, the turn is also appended to the S3 transcript JSON for durability. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — tickets `S3-TR-002`, `S3-TR-004`.
 
 #### `DB-007` Create report table
 - Link to session
@@ -388,17 +444,17 @@ Ship a complete voice-first personalized interview flow.
 
 #### `AI-008` Build interview session orchestrator
 - On session start: call LLM with rendered system prompt → get opening question
-- On each candidate answer: call LLM with system prompt + last N turns from Redis → get next question or completion signal
+- On each candidate answer: call LLM with system prompt + last N turns from Postgres → get next question or completion signal
 - Parse LLM output to detect completion signal vs next question
 - Keep the orchestrator decoupled from transport (works with both WebSocket voice and REST)
-- **Depends on:** AI-007, DB-005, DB-006, RT-REDIS-003
+- **Depends on:** AI-007, DB-005, DB-006
 - **Estimate:** 2 days
 - **Status:** To Do
 - **Acceptance Criteria:**
   - Orchestrator produces a valid opening question from the rendered system prompt
   - Follow-up questions are contextually relevant to the previous answer
   - Completion signal from LLM is correctly parsed and triggers session close
-  - LLM context is read from Redis (`get_recent_turns`) — no Postgres query per turn
+  - LLM context is built by querying the last N turns from Postgres (`SELECT ... ORDER BY sequence_no DESC LIMIT 6`)
 - **Note:** Full turn cycle documented in [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 4, Phase 2.
 
 #### `AI-009` Add completion guardrails
@@ -412,7 +468,7 @@ Ship a complete voice-first personalized interview flow.
   - Interview stops at the configured max question count even if LLM does not signal completion
   - Session status is updated to completed and report generation is triggered in both paths
 
-### Workstream F: Reporting
+### Workstream H: Reporting
 
 #### `AI-010` Define report schema
 - Define the structured report output including summary, strengths, weaknesses, improvement areas, and category score placeholders
@@ -449,7 +505,7 @@ Ship a complete voice-first personalized interview flow.
   - Returns 422 if any required field is missing
   - Returns 404 if the resume does not belong to the current user
   - Returns 409 if the resume parse_status is not completed
-- **Note:** Full bootstrap sequence documented in [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 4, Phase 1.
+- **Note:** Full bootstrap sequence documented in [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 4, Phase 1. Session start also creates the S3 transcript JSON doc and sets `transcript_s3_key` on the session row.
 
 #### `BE-014` Add interview answer endpoint
 - `POST /api/v1/interview/{session_id}/answer` accepts the candidate's answer transcript or audio reference
@@ -635,13 +691,13 @@ Harden the live session experience for voice interviews using streaming events a
 
 #### `RT-004` Add autosave support
 - Save partial session state after each turn so progress is not lost mid-interview
-- **Depends on:** DB-006, RT-003, RT-REDIS-003
+- **Depends on:** DB-006, RT-003
 - **Estimate:** 1 day
 - **Status:** To Do
 - **Acceptance Criteria:**
   - Each completed turn is persisted before the next question is sent
   - No turns are lost if the server restarts between turns
-- **Note:** Turn persistence is synchronous — Postgres INSERT happens immediately after utterance assembly, not deferred. Redis holds the context cache only. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 4.
+- **Note:** Turn persistence is synchronous — Postgres INSERT happens immediately after utterance assembly, not deferred. After each INSERT, the S3 transcript JSON is also updated so turns are never lost even on abrupt disconnect. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 6.
 
 #### `RT-005` Add reconnect support
 - Allow a client to rejoin an active session after a disconnect
@@ -684,23 +740,23 @@ Improve voice input and spoken AI output reliability on top of the MVP foundatio
 
 #### `VO-002` Build speech ingestion interface
 - Accept audio chunks or recorded blobs associated with an interview session and turn
-- **Depends on:** VO-001, DB-006, RT-REDIS-001
+- **Depends on:** VO-001, DB-006
 - **Estimate:** 1 day
 - **Status:** To Do
 - **Acceptance Criteria:**
   - Audio can be submitted and linked to the correct session and turn
-- **Note:** Partial STT results from this interface are buffered in Redis (`interview:chunks:{session_id}`) — not written to Postgres. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 4, Step 1.
+- **Note:** Partial STT results from this interface are buffered in-memory in the WebSocket connection handler (a Python list local to the WS scope) — not written to Postgres or Redis. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 6, Step 1.
 
 #### `VO-003` Integrate STT provider
 - Convert speech input to transcript text
 - Return partial and final transcript states where the provider supports it
-- **Depends on:** VO-002, RT-REDIS-002
+- **Depends on:** VO-002
 - **Estimate:** 1.5 days
 - **Status:** To Do
 - **Acceptance Criteria:**
   - Spoken input produces a text transcript associated with the correct turn
   - Partial transcripts are surfaced to the frontend as available
-- **Note:** Partial STT results go to Redis chunk buffer. Only the final assembled text triggers a Postgres INSERT into `interview_turns`. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 4, Steps 1–2.
+- **Note:** Partial STT results go to the in-memory buffer in the WebSocket handler. Only the final assembled text triggers a Postgres INSERT into `interview_turns`, followed by an S3 JSON append for durability. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 6, Steps 1–2.
 
 #### `DB-012` Create transcript chunk table
 - Store transcript chunks linked to session and turn with timestamp boundaries and provider metadata
@@ -709,7 +765,7 @@ Improve voice input and spoken AI output reliability on top of the MVP foundatio
 - **Status:** To Do
 - **Acceptance Criteria:**
   - Chunks are stored with enough metadata to reconstruct the full transcript in order
-- **Note:** In MVP, in-flight STT chunks live in Redis only (`interview:chunks:{session_id}`) and are never persisted to this table during the live session. This table is for post-session audit / communication signal analysis (Phase 6). If chunk persistence during voice sessions becomes a requirement before Phase 6, revisit after `RT-REDIS-002` is stable. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 9.
+- **Note:** In MVP, in-flight STT chunks are held in-memory in the WebSocket handler and are never persisted to this table during the live session. This table is for post-session audit / communication signal analysis (Phase 6) only. See [`voice-transcript-redis-plan.md`](./voice-transcript-redis-plan.md) — Section 11.
 
 #### `VO-004` Add STT retry and fallback handling
 - Handle transient STT provider failures with retry logic

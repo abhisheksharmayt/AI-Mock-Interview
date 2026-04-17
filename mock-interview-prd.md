@@ -703,7 +703,7 @@ Turn the platform into a reusable API product for third parties.
 ### Recommended Initial Stack
 - Backend: FastAPI
 - Database: Postgres
-- Cache and queue: Redis
+- Cache: Redis (basic key/value only — not used for transcript buffering)
 - Background jobs: Celery or RQ
 - ORM: SQLAlchemy or SQLModel
 - Storage: S3-compatible object storage

@@ -1,10 +1,10 @@
-# Voice Transcript Storage Plan — Redis + Postgres
+# Voice Transcript Storage Plan — S3 + Postgres + In-Memory Buffer
 
 ## 1. Purpose
 
-This document defines the engineering approach for storing interview transcript data during a voice session. It covers the Redis scratchpad pattern for in-flight STT chunks and the per-turn Postgres write strategy for durable transcript storage.
+This document defines the engineering approach for storing interview transcript data during a voice session. It covers the in-memory buffer pattern for in-flight STT chunks, the per-turn Postgres write strategy, and the S3 JSON archive that provides durability across abrupt disconnects.
 
-This plan is a dependency for tickets: `DB-006`, `DB-012`, `VO-002`, `VO-003`, `RT-004`, `AI-006`, `AI-007`, `AI-008`, `AI-009`, `BE-013`
+This plan is a dependency for tickets: `DB-006`, `DB-012`, `VO-002`, `VO-003`, `RT-004`, `AI-006`, `AI-007`, `AI-008`, `AI-009`, `BE-013`, `S3-TR-001`, `S3-TR-002`, `S3-TR-003`, `S3-TR-004`
 
 ---
 
@@ -12,59 +12,59 @@ This plan is a dependency for tickets: `DB-006`, `DB-012`, `VO-002`, `VO-003`, `
 
 Voice mode generates high-frequency STT fragments (partial transcripts every 100–300ms while the user speaks). Writing each fragment to Postgres would produce 5–10 DB writes per second per user — unacceptable for an interview session.
 
-**Decision:** Use Redis as a scratchpad for in-flight audio chunks only. Write one final completed turn to Postgres per speaker exchange.
+**Decision:** Use an in-memory buffer (Python list in the WebSocket handler) as a scratchpad for in-flight audio chunks. Write one final completed turn to Postgres per speaker exchange. After every completed turn, also write/update an S3 JSON file so the full transcript is durable even if the connection drops before the session is formally closed.
 
-This is **not** a write-behind cache pattern. Redis is not a buffer for deferred Postgres writes. It is a temporary assembly area for partial STT data. Postgres is the source of truth for all completed turns.
+This is **not** a write-behind cache pattern. Postgres is the source of truth for all completed turns. S3 JSON is a portable, durable per-session archive that mirrors Postgres turns and is always up-to-date.
+
+**Redis is not used for transcript storage.** Redis (`set_cache`/`get_cache`) remains available for other basic caching needs but has no role in the interview transcript flow.
 
 ---
 
-## 3. Redis Key Schema
+## 3. S3 Transcript Schema
 
-Two keys per active session. No other Redis keys are needed for transcript storage in MVP.
+### Key Pattern
 
 ```
-interview:chunks:{session_id}   → LIST
-interview:turns:{session_id}    → LIST
+transcripts/{session_id}.json
 ```
 
-### `interview:chunks:{session_id}` — LIST
+Stored in the same S3 bucket as resumes (`settings.S3_BUCKET`).
 
-Stores partial STT fragments as the user speaks. Ephemeral. Cleared after each utterance is assembled.
+### JSON Structure
 
-Each entry is a JSON string:
 ```json
 {
-  "chunk_id": "uuid",
-  "text": "so I was working on",
-  "is_final": false,
-  "provider_seq": 3,
-  "timestamp": "2026-04-14T10:23:11.312Z"
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "user_id": "...",
+  "status": "in_progress",
+  "started_at": "2026-04-17T10:00:00Z",
+  "updated_at": "2026-04-17T10:05:00Z",
+  "turns": [
+    {
+      "turn_id": "...",
+      "sequence_no": 1,
+      "speaker_type": "interviewer",
+      "turn_kind": "question",
+      "content_text": "Tell me about yourself.",
+      "is_final": true,
+      "latency_ms": null,
+      "created_at": "2026-04-17T10:00:05Z"
+    },
+    {
+      "turn_id": "...",
+      "sequence_no": 2,
+      "speaker_type": "candidate",
+      "turn_kind": "answer",
+      "content_text": "I have five years of backend experience...",
+      "is_final": true,
+      "latency_ms": null,
+      "created_at": "2026-04-17T10:01:30Z"
+    }
+  ]
 }
 ```
 
-TTL: **1 hour** (sliding, refreshed on each RPUSH)
-
-### `interview:turns:{session_id}` — LIST
-
-Stores completed turns (AI questions + candidate answers) in order. Used to build AI context window without re-querying Postgres on every turn.
-
-Each entry is a JSON string:
-```json
-{
-  "turn_id": "uuid",
-  "session_id": "uuid",
-  "sequence_no": 4,
-  "speaker_type": "assistant",
-  "turn_kind": "question",
-  "content_text": "Tell me about a time you debugged a production issue.",
-  "is_final": true,
-  "latency_ms": 312,
-  "metadata_json": { "model": "claude-sonnet-4-6", "tokens": 48 },
-  "created_at": "2026-04-14T10:23:11Z"
-}
-```
-
-TTL: **4 hours** (sliding, refreshed on each RPUSH)
+The `updated_at` field is refreshed on every `append_turn` call. `status` is `in_progress` during the session and `completed` (or `abandoned`) after close.
 
 ---
 
@@ -87,10 +87,13 @@ POST /api/v1/interview/start
 5. Create interview_sessions row
    - status = in_progress
    - interview_context_json = { rendered_system_prompt, resume_summary, role, company }
-6. Call LLM (system prompt only) → opening question text
-7. TTS → convert opening question to audio
-8. INSERT AI turn → interview_turns (Postgres)
-9. RPUSH interview:turns:{session_id} (Redis cache, lazy init)
+   - transcript_s3_key = None (set in step 6)
+6. Create S3 transcript doc → transcripts/{session_id}.json
+   - UPDATE interview_sessions SET transcript_s3_key = 'transcripts/{session_id}.json'
+7. Call LLM (system prompt only) → opening question text
+8. TTS → convert opening question to audio
+9. INSERT AI turn → interview_turns (Postgres)
+10. Append AI turn → S3 transcript JSON
          ↓
 Response: { session_id, question_text, audio_url }
 ```
@@ -109,22 +112,20 @@ CANDIDATE SPEAKS:
       ↓
   STT partial results
       ↓
-  RPUSH interview:chunks:{session_id}        ← Redis only
-  EXPIRE interview:chunks:{session_id} 3600
-  Broadcast transcript_updated → frontend (live caption)
+  Append to in-memory chunk buffer (Python list, local to WS handler)
+  Send {"type": "transcript_partial", "text": "..."} → frontend (live caption)
       ↓
   Silence threshold / end-of-utterance detected
       ↓
-  LRANGE interview:chunks:{session_id} 0 -1  ← assemble final text
-  DELETE interview:chunks:{session_id}        ← reset for next turn
+  Assemble final text from in-memory buffer → clear buffer
       ↓
-  INSERT candidate turn → interview_turns (Postgres)
-  RPUSH interview:turns:{session_id}          ← update context cache
-  EXPIRE interview:turns:{session_id} 14400
+  INSERT candidate turn → interview_turns (Postgres)  ← one write, sync
+  Append turn → S3 transcript JSON                    ← durability write
 
 AI RESPONDS:
       ↓
-  LRANGE interview:turns:{session_id} -6 -1  ← last 6 turns, no DB query
+  SELECT * FROM interview_turns WHERE session_id = ? ORDER BY sequence_no DESC LIMIT 6
+  (last 6 turns for LLM context — no Redis, direct Postgres query)
       ↓
   Call LLM (rendered system prompt + recent turns)
       ↓
@@ -135,8 +136,7 @@ AI RESPONDS:
       ↓ (next question path)
   TTS → audio
   INSERT AI turn → interview_turns (Postgres)
-  RPUSH interview:turns:{session_id}          ← update context cache
-  EXPIRE interview:turns:{session_id} 14400
+  Append AI turn → S3 transcript JSON
   Send { question_text, audio_url } via WebSocket
       ↓
   Repeat from CANDIDATE SPEAKS
@@ -147,13 +147,11 @@ AI RESPONDS:
 ### Phase 3 — Session Close
 
 ```
-LLM signals completion  OR  max turn count reached
+LLM signals completion  OR  max turn count reached  OR  WebSocket disconnects
          ↓
-1. Send session_completed event to frontend via WebSocket
+1. Send session_completed event to frontend via WebSocket (if connection alive)
 2. UPDATE interview_sessions SET status=completed, completed_at=now()
-3. DELETE Redis keys:
-   interview:turns:{session_id}
-   interview:chunks:{session_id}
+3. Finalize S3 transcript JSON → set status=completed, updated_at=now()
 4. Close WebSocket connection
 5. Trigger report generation (async background task)
          ↓
@@ -168,9 +166,9 @@ Frontend polls: GET /api/v1/interview/{session_id}/report
 |---|---|
 | LLM never signals completion | Max turn count hard stop |
 | Candidate silent too long | Silence timeout → send reprompt event via WS |
-| WebSocket disconnects mid-session | Reconnect restores state from Postgres + Redis |
-| Redis key expires before session ends | 4hr TTL covers longest possible session; fallback to Postgres query |
-| Session left in_progress after crash | Redis TTL fires → cleanup job marks as abandoned (Phase 3) |
+| WebSocket disconnects mid-session | S3 JSON has all turns up to last completed one; reconnect reads from Postgres |
+| Server restarts mid-utterance | In-memory buffer lost (~seconds of in-progress speech); candidate must re-speak; all *completed* turns are safe in Postgres + S3 |
+| Session left in_progress after crash | Cleanup job marks as abandoned; S3 transcript already reflects all turns written |
 
 ---
 
@@ -219,14 +217,13 @@ The final rendered system prompt is stored in `interview_sessions.interview_cont
 ### Step 1 — STT streaming (candidate speaks)
 
 ```
-Audio chunk arrives (WebSocket / HTTP stream)
+Audio chunk arrives (WebSocket)
     ↓
 STT provider returns partial transcript
     ↓
-RPUSH interview:chunks:{session_id}  ← Redis only, no Postgres
-EXPIRE interview:chunks:{session_id} 3600
+Append text to in-memory buffer (list in WS handler scope)
     ↓
-Broadcast partial transcript to frontend via WebSocket (transcript_updated event)
+Send {"type": "transcript_partial", "text": "..."} to frontend via WebSocket
 ```
 
 ### Step 2 — Utterance complete (silence detected)
@@ -234,154 +231,149 @@ Broadcast partial transcript to frontend via WebSocket (transcript_updated event
 ```
 Silence threshold reached / end-of-utterance detected
     ↓
-LRANGE interview:chunks:{session_id} 0 -1  ← assemble final text
+Assemble final text by joining in-memory buffer entries
     ↓
-Final candidate turn text assembled
+Clear in-memory buffer
     ↓
-INSERT INTO interview_turns (Postgres) ← one write, sync
-RPUSH interview:turns:{session_id}     ← add to context cache
-EXPIRE interview:turns:{session_id} 14400
-DELETE interview:chunks:{session_id}   ← reset for next utterance
+INSERT INTO interview_turns (Postgres)  ← one write, sync
+TranscriptS3Service.append_turn(s3_key, turn)  ← read-modify-write on S3 JSON
 ```
 
 ### Step 3 — AI responds
 
 ```
-LRANGE interview:turns:{session_id} -6 -1  ← last 6 turns for LLM context
+SELECT last 6 turns FROM interview_turns WHERE session_id = ?  ← Postgres query
     ↓
 Call LLM with context → get next question
     ↓
-INSERT INTO interview_turns (Postgres) ← AI turn, sync
-RPUSH interview:turns:{session_id}     ← add to context cache
-EXPIRE interview:turns:{session_id} 14400
+INSERT INTO interview_turns (Postgres)  ← AI turn, sync
+TranscriptS3Service.append_turn(s3_key, turn)  ← update S3 JSON
     ↓
 Run TTS → return audio + transcript to frontend
 ```
 
 ---
 
-## 5. Session Lifecycle
+## 7. Session Lifecycle
 
 ### On session start (`POST /api/v1/interview/start`)
 
 ```python
-# No Redis keys created yet — lazy init on first chunk
-# Create interview_sessions row in Postgres with status=in_progress
+# 1. Create interview_sessions row (transcript_s3_key = None initially)
+# 2. TranscriptS3Service.create_transcript(session_id, user_id, started_at)
+#    → uploads initial JSON to S3, returns s3_key
+# 3. UPDATE interview_sessions SET transcript_s3_key = s3_key
 ```
 
-### On session end (`POST /api/v1/interview/{session_id}/end` or completion signal)
+### On session end (completion signal or WS disconnect)
 
 ```python
-# 1. Final Postgres flush — not needed since we write sync per turn
-# 2. Update interview_sessions.status = completed, completed_at = now()
-# 3. Delete Redis keys
-await redis.delete(
-    f"interview:turns:{session_id}",
-    f"interview:chunks:{session_id}",
-)
-# 4. Trigger report generation
+# 1. UPDATE interview_sessions SET status=completed, completed_at=now()
+# 2. TranscriptS3Service.finalize_transcript(s3_key, completed_at=now())
+#    → downloads JSON, sets status=completed, re-uploads
+# 3. Trigger report generation background task
 ```
 
 ### On session abandon / crash
 
-Redis TTL handles cleanup automatically (4h for turns, 1h for chunks). If the session is left `in_progress` in Postgres and TTL fires, a cleanup job can mark it `abandoned`. This is a Phase 3 concern — not needed for MVP.
+S3 JSON is written after every completed turn, so it always reflects the latest durable state. A cleanup job can mark abandoned sessions in Postgres; the S3 archive is already complete for all turns written before the crash.
 
 ---
 
-## 6. Redis Configuration (MVP)
+## 8. WebSocket Message Protocol
 
-Use Redis defaults for MVP. No AOF config changes required.
-
-When moving to production, enable:
 ```
-appendonly yes
-appendfsync everysec
-aof-use-rdb-preamble yes
+// Client → Server
+{"type": "audio_chunk", "data": "<base64-encoded PCM>"}
+{"type": "end_utterance"}   // optional explicit signal (silence detection preferred)
+
+// Server → Client
+{"type": "transcript_partial", "text": "tell me about..."}         // live captions
+{"type": "transcript_final", "sequence_no": 2, "turn_id": "..."}   // turn persisted to Postgres + S3
+{"type": "session_completed"}                                       // interview finished
+{"type": "error", "message": "..."}
 ```
 
 ---
 
-## 7. Code Location
+## 9. Code Locations
 
 | Concern | Location |
 |---|---|
-| Redis LIST helpers (rpush, lrange, delete, expire) | `backend/app/cache/redis_client.py` |
-| Chunk assembly logic | `backend/app/services/voice_service.py` |
+| S3 JSON helpers (`upload_json`, `download_json`) | `backend/app/utils/amazon_utils.py` |
+| Transcript S3 service (create / append / finalize) | `backend/app/services/transcript_s3_service.py` |
+| In-memory chunk assembly | `backend/app/routers/interview_ws.py` (local to WS handler) |
 | Turn persistence | `backend/app/services/interview_service.py` |
-| Session cleanup on close | `backend/app/services/interview_service.py` |
-| Context window builder | `backend/app/services/interview_orchestrator.py` |
+| LLM context builder (last N turns from Postgres) | `backend/app/services/interview_orchestrator.py` |
+| Session close / cleanup | `backend/app/services/interview_service.py` |
 
 ---
 
-## 8. Engineering Tickets
+## 10. Engineering Tickets
 
-### `RT-REDIS-001` Extend Redis client with LIST operations
+### `S3-TR-001` Add JSON helpers to AmazonUtils
 
-- Add `rpush`, `lrange`, `delete`, `expire` pipeline helpers to `redis_client.py`
-- Add per-session key builders as constants or a helper: `chunks_key(session_id)`, `turns_key(session_id)`
-- Do not change existing `set_cache` / `get_cache` string helpers — leave them intact
-- **Depends on:** BE-005
-- **Estimate:** 0.5 days
-- **Status:** To Do
-- **Acceptance Criteria:**
-  - `rpush_with_ttl(key, value, ttl)` appends to a LIST and refreshes TTL atomically via pipeline
-  - `lrange_all(key)` returns all entries in the LIST
-  - `delete_keys(*keys)` deletes one or more keys in a single call
-  - All operations are async
-
-### `RT-REDIS-002` Implement STT chunk buffer
-
-- On each partial STT result: `RPUSH interview:chunks:{session_id}` + refresh TTL
-- On utterance complete: `LRANGE` to assemble, then `DELETE` the key
-- Return the assembled final text string
-- **Depends on:** RT-REDIS-001, VO-003
-- **Estimate:** 0.5 days
-- **Status:** To Do
-- **Acceptance Criteria:**
-  - Partial chunks are buffered in Redis without any Postgres writes
-  - Assembled text matches the concatenation of all final chunk texts in order
-  - Chunk key is deleted after assembly
-
-### `RT-REDIS-003` Implement turn context cache
-
-- After each completed turn (AI or candidate): `RPUSH interview:turns:{session_id}` + refresh TTL
-- Expose `get_recent_turns(session_id, n=6)` using `LRANGE -n -1` for LLM context building
-- **Depends on:** RT-REDIS-001, DB-006
-- **Estimate:** 0.5 days
-- **Status:** To Do
-- **Acceptance Criteria:**
-  - `get_recent_turns` returns the last N turns in order without a Postgres query
-  - Turn cache is updated immediately after each INSERT into `interview_turns`
-
-### `RT-REDIS-004` Add session cleanup on close
-
-- On session complete or abandon: delete `interview:turns:{session_id}` and `interview:chunks:{session_id}`
-- Call this from the session close path in `interview_service.py`
-- **Depends on:** RT-REDIS-001, DB-005
+- Add `upload_json(data: dict, bucket: str, key: str) -> None` — serializes to UTF-8 JSON bytes and uploads
+- Add `download_json(bucket: str, key: str) -> dict` — downloads and deserializes
+- **Depends on:** BE-011
 - **Estimate:** 0.25 days
 - **Status:** To Do
 - **Acceptance Criteria:**
-  - Both keys are deleted when a session is closed cleanly
-  - Cleanup does not raise an error if keys have already expired
+  - `upload_json` followed by `download_json` round-trips a dict without data loss
+  - Both methods work against MinIO in local dev and AWS S3 in production
+
+### `S3-TR-002` Build TranscriptS3Service
+
+- `create_transcript(session_id, user_id, started_at) -> str` — creates initial JSON, returns s3_key
+- `append_turn(s3_key, turn) -> None` — read-modify-write: download JSON, append turn, re-upload
+- `finalize_transcript(s3_key, completed_at) -> None` — download JSON, set status=completed, re-upload
+- **Depends on:** S3-TR-001
+- **Estimate:** 0.5 days
+- **Status:** To Do
+- **Acceptance Criteria:**
+  - After `create_transcript`, downloading the S3 key returns a valid JSON doc with an empty `turns` array
+  - Each `append_turn` call adds the turn to the array and refreshes `updated_at`
+  - `finalize_transcript` sets `status` to `completed`
+  - If the S3 key does not exist, `append_turn` raises a clear error
+
+### `S3-TR-003` Add transcript_s3_key to interview_sessions
+
+- Add `transcript_s3_key VARCHAR(512)` column to `interview_sessions`
+- Migration SQL: `ALTER TABLE interview_sessions ADD COLUMN transcript_s3_key VARCHAR(512);`
+- Update `InterviewSession` SQLModel: add `transcript_s3_key: Optional[str]` field
+- **Depends on:** DB-005
+- **Estimate:** 0.25 days
+- **Status:** To Do
+- **Acceptance Criteria:**
+  - Column exists after migration
+  - Column is nullable (sessions in draft state before S3 doc is created)
+  - `transcript_s3_key` is populated on the session row immediately after `create_transcript`
+
+### `S3-TR-004` WebSocket handler with in-memory buffer + S3 per-turn write
+
+- `WS /ws/interview/{session_id}` — authenticate via JWT, load session
+- On connect: call `TranscriptS3Service.create_transcript(...)` if `transcript_s3_key` is None
+- On `audio_chunk`: append STT partial to in-memory list, send `transcript_partial` to client
+- On utterance complete: assemble from buffer, clear buffer, INSERT Postgres, `append_turn` to S3, send `transcript_final`
+- On disconnect / completion: `finalize_transcript`, update session status
+- **Depends on:** S3-TR-002, S3-TR-003, DB-006, RT-001
+- **Estimate:** 2 days
+- **Status:** To Do
+- **Acceptance Criteria:**
+  - Client receives `transcript_partial` events for each STT chunk
+  - After utterance complete, `interview_turns` has the new row and S3 JSON includes it
+  - Simulating a disconnect mid-interview and re-downloading the S3 JSON shows all completed turns
+  - Reconnecting to an in-progress session does not duplicate turns
 
 ---
 
-## 9. What Is Explicitly Out of Scope (MVP)
+## 11. What Is Explicitly Out of Scope (MVP)
 
-- ARQ background workers — not needed, turns are written sync
-- Write-behind / deferred Postgres flush — not needed
-- `interview:pending` queue — not needed
-- Redis AOF config changes — defer to production hardening
-- Keyspace notifications for abandoned sessions — Phase 3
-- Redis Streams — not needed, single producer/consumer per session
-
----
-
-## 10. Upgrade Path
-
-When concurrent users or multi-region deployment becomes a concern:
-
-1. Add ARQ worker for async Postgres writes (replace sync INSERT per turn)
-2. Add `interview:pending:{session_id}` LIST as write-behind queue
-3. Enable Redis AOF persistence
-4. Consider Redis Streams if real-time evaluation pipeline needs fan-out to multiple consumers
+- Redis LIST operations for transcript buffering
+- ARQ background workers — turns are written sync
+- Write-behind / deferred Postgres flush
+- S3 cross-region replication
+- Per-chunk S3 writes (only per-turn)
+- `transcript_chunks` Postgres table during live sessions (Phase 6 only — post-session audit)
+- Redis AOF / persistence config for transcript data
+- Redis Streams
