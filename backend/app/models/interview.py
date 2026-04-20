@@ -34,7 +34,6 @@ class InterviewSession(BaseModel, table=True):
     __table_args__ = (
         Index("ix_interview_sessions_user_id", "user_id"),
         Index("ix_interview_sessions_status", "status"),
-        Index("ix_interview_sessions_mode", "mode"),
         Index("ix_interview_sessions_created_at_desc", text("created_at DESC")),
     )
 
@@ -60,14 +59,6 @@ class InterviewSession(BaseModel, table=True):
             nullable=False,
         ),
     )
-    template_id: Optional[UUID] = Field(
-        default=None,
-        sa_column=Column(
-            Uuid(as_uuid=True),
-            ForeignKey("interview_templates.id"),
-            nullable=True,
-        ),
-    )
     status: InterviewStatus = Field(
         default=InterviewStatus.draft,
         sa_column=Column(
@@ -76,32 +67,12 @@ class InterviewSession(BaseModel, table=True):
             server_default=text("'draft'::interview_status"),
         ),
     )
-    mode: InterviewMode = Field(
-        default=InterviewMode.voice,
-        sa_column=Column(
-            SAEnum(InterviewMode, name="interview_mode", native_enum=True),
-            nullable=False,
-            server_default=text("'voice'::interview_mode"),
-        ),
-    )
     interview_type: str = Field(sa_column=Column(String(255), nullable=False))
-    interviewer_type: InterviewerType = Field(
-        default=InterviewerType.ai,
-        sa_column=Column(
-            SAEnum(InterviewerType, name="interviewer_type", native_enum=True),
-            nullable=False,
-            server_default=text("'ai'::interviewer_type"),
-        ),
-    )
     title: Optional[str] = Field(
         default=None,
         sa_column=Column(String(512), nullable=True),
     )
-    interview_context_json: dict[str, Any] = Field(
-        default_factory=dict,
-        sa_column=Column(JSONB, nullable=False, server_default=text("'{}'::jsonb")),
-    )
-    plan_json: dict[str, Any] = Field(
+    interview_context_json: Optional[dict[str, Any]] = Field(
         default_factory=dict,
         sa_column=Column(JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     )

@@ -140,7 +140,7 @@ async def parse_resume_background(
 
             logger.info(f"Extracted text: {extracted_text}")
 
-            parsed_resume_data = await parse_resume_with_ai(prompt=extracted_text)
+            parsed_resume_data = parse_resume_with_ai(prompt=extracted_text)
 
             logger.info(f"Parsed resume data: {parsed_resume_data}")
 

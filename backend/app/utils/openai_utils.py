@@ -88,8 +88,7 @@ If you summarize or omit details, the output is considered incorrect.
 """
 
 
-
-async def parse_resume_with_ai(prompt: str) -> OpenAIResponse:
+def parse_resume_with_ai(prompt: str) -> OpenAIResponse:
     try:
         logger.info(f"Invoking OpenAI API to parse resume with AI")
         response = client.responses.parse(
@@ -104,4 +103,20 @@ async def parse_resume_with_ai(prompt: str) -> OpenAIResponse:
         return OpenAIResponse.model_validate_json(response.output_text)
     except Exception:
         logger.exception("Error while parsing resume with AI")
+        raise
+
+
+def generate_interview_question(prompt: str, turns: list[dict]) -> str:
+    try:
+        logger.info(f"Generating interview question with AI")
+        response = client.responses.parse(
+            model="gpt-5-mini",
+            input=[
+                {"role": "system", "content": prompt},
+                *turns,
+            ],
+        )
+        return response.output_text
+    except Exception:
+        logger.exception("Error while generating interview question")
         raise

@@ -144,3 +144,13 @@ class ResumeRepository:
             await self.db.rollback()
             logger.exception("Error while creating JD record")
             raise
+    
+    async def get_jd_by_id(self, jd_id: UUID) -> JobDescription:
+        try:
+            jd_record = await self.db.get(JobDescription, jd_id)
+            if not jd_record:
+                raise Exception(f"JD not found: {jd_id}")
+            return jd_record
+        except Exception:
+            logger.exception("Error while getting JD by id")
+            raise

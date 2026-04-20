@@ -40,3 +40,8 @@ class TurnKind(Enum):
     question = "question"
     answer = "answer"
     system_event = "system_event"
+
+class InterviewType(Enum):
+    technical = "technical"
+    behavioral = "behavioral"
+    resume_based = "resume_based"
