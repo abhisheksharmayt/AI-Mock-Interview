@@ -109,14 +109,18 @@ def parse_resume_with_ai(prompt: str) -> OpenAIResponse:
 def generate_interview_question(prompt: str, turns: list[dict]) -> str:
     try:
         logger.info(f"Generating interview question with AI")
-        response = client.responses.parse(
+        response = client.responses.create(
             model="gpt-5-mini",
             input=[
                 {"role": "system", "content": prompt},
                 *turns,
             ],
         )
-        return response.output_text
+        output_text = (response.output_text or "").strip()
+        if not output_text:
+            raise ValueError("OpenAI returned empty interview question")
+        logger.info("Interview question generated")
+        return output_text
     except Exception:
         logger.exception("Error while generating interview question")
         raise

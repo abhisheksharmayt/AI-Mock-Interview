@@ -9,6 +9,7 @@ class Configs(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     S3_RESUME_BUCKET: str = "ai-interview-test"
     OPENAI_API_KEY: str = "default_openai_api_key"
+    CARTESIA_API_KEY: str = "default_cartesia_api_key"
 
 
 configs = Configs()
