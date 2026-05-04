@@ -3,7 +3,7 @@ from app.common.enums import ParseStatus
 from app.schemas.openai import OpenAIResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
-
+from sqlalchemy import select
 from app.models.resume import File, JobDescription, ParsedResume, Resume
 from app.schemas.resume import FileUpload, JobDescriptionCreate, ParsedResumeCreate, ParsedResumeResponse, ResumeUpload
 
@@ -56,7 +56,11 @@ class ResumeRepository:
 
     async def get_resume_by_id(self, resume_id: UUID) -> Resume:
         try:
-            resume_record = await self.db.get(Resume, resume_id)
+            stmt = (
+                select(Resume).where(Resume.id == resume_id)
+            )
+            result = await self.db.execute(stmt)
+            resume_record = result.scalar_one_or_none()
             if not resume_record:
                 raise Exception(f"Resume not found: {resume_id}")
             return resume_record
@@ -122,6 +126,18 @@ class ResumeRepository:
         except Exception:
             await self.db.rollback()
             logger.exception("Error while updating resume parse status")
+            raise
+
+    async def get_parsed_resume_by_id(self, resume_id: UUID) -> ParsedResumeResponse:
+        try:
+            stmt = (
+                select(ParsedResume).where(ParsedResume.resume_id == resume_id)
+            )
+
+            result = await self.db.execute(stmt)
+            return result.scalar_one_or_none()
+        except Exception:
+            logger.exception("Error while retrieving resume")
             raise
     
     async def create_jd(self, jd_data: JobDescriptionCreate, user_id: UUID) -> JobDescription:

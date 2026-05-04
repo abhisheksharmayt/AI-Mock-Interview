@@ -1,44 +1,62 @@
+from dataclasses import dataclass
 from cartesia import Cartesia
-import subprocess
-import os
 from app.core.configs import configs
 from loguru import logger
+from threading import Lock
 
+@dataclass
+class CartesiaSessionState:
+    connection: object
+    ctx: object
 
-client = Cartesia(api_key=configs.CARTESIA_API_KEY)
+class CartesiaSessionManager:
+    def __init__(self):
+        self.client = Cartesia(api_key=configs.CARTESIA_API_KEY)
+        self._sessions: dict[str, CartesiaSessionState] = {}
+        self._lock = Lock()
 
-player = subprocess.Popen(
-    ["ffplay", "-f", "f32le", "-ar", "44100", "-probesize", "32", "-analyzeduration", "0", "-nodisp", "-autoexit", "-loglevel", "quiet", "-"],
-    stdin=subprocess.PIPE,
-    bufsize=0,
-)
+    def get_or_create(self, session_id: str) -> CartesiaSessionState:
+        with self._lock:
+            existing = self._sessions.get(session_id)
+            if existing:
+                return existing
+            connection = self.client.tts.websocket_connect().enter()
+            ctx = connection.context(
+                model_id="sonic-3",
+                voice={"mode": "id", "id": "f786b574-daa5-4673-aa0c-cbe3e8534c02"},
+                output_format={
+                    "container": "raw",
+                    "encoding": "pcm_f32le",
+                    "sample_rate": 44100,
+                },
+            )
+            state = CartesiaSessionState(connection=connection, ctx=ctx)
+            self._sessions[session_id] = state
+            return state
 
-print("Connecting to Cartesia via websockets...")
-with client.tts.websocket_connect() as connection:
-    ctx = connection.context(
-        model_id="sonic-3",
-        voice={"mode": "id", "id": "f786b574-daa5-4673-aa0c-cbe3e8534c02"},
-        output_format={
-            "container": "raw",
-            "encoding": "pcm_f32le",
-            "sample_rate": 44100,
-        },
-    )
+    def close(self, session_id: str):
+        with self._lock:
+            state = self._sessions.pop(session_id, None)
+            if state:
+                state.connection.close()
+                return True
+            return False
 
-    print("Sending chunked text input...")
-    for part in ["Hi there! ", "Welcome to ", "Cartesia Sonic."]:
-        ctx.push(part)
-
-    ctx.no_more_inputs()
-
-    for response in ctx.receive():
-        if response.type == "chunk" and response.audio:
-            print(f"Received audio chunk ({len(response.audio)} bytes)")
-            # Here we pipe audio to ffplay. In a production app you might play audio in
-            # a client, or forward it to another service, eg, a telephony provider.
-            player.stdin.write(response.audio)
-        elif response.type == "done":
-            break
-
-player.stdin.close()
-player.wait()
+    def text_to_speech(self, session_id: str, text: str)->bytes:
+        try:
+            with self._lock:
+                state = self._sessions.get(session_id)
+                if not state:
+                    raise ValueError(f"Session {session_id} not found")
+                state.ctx.push(text)
+                state.ctx.no_more_inputs()
+                audio_chunks = []
+                for response in state.ctx.receive():
+                    if response.type == "chunk" and response.audio:
+                        audio_chunks.append(response.audio)
+                    elif response.type == "done":
+                        break
+                return b"".join(audio_chunks)
+        except Exception:
+            logger.exception("Error while generating audio")
+            raise

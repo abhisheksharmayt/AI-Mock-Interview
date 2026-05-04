@@ -115,14 +115,6 @@ class InterviewTurn(BaseModel, table=True):
             nullable=False,
         ),
     )
-    participant_id: Optional[UUID] = Field(
-        default=None,
-        sa_column=Column(
-            Uuid(as_uuid=True),
-            ForeignKey("session_participants.id"),
-            nullable=True,
-        ),
-    )
     speaker_type: SpeakerType = Field(
         sa_column=Column(
             SAEnum(SpeakerType, name="speaker_type", native_enum=True),

@@ -7,9 +7,8 @@ from alembic import context
 
 from sqlmodel import SQLModel
 
-# import models so they register in metadata
-from app.models.resume import File, JobDescription, ParsedResume, Resume  # noqa: F401
-from app.models.users import User, UserProfile
+# Import model modules so SQLModel registers all tables in metadata.
+from app.models import interview, resume, users  # noqa: F401
 
 
 # this is the Alembic Config object, which provides

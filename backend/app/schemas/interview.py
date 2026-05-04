@@ -20,6 +20,11 @@ class InterviewSessionCreate(BaseModel):
     interview_context_json: Optional[dict[str, Any]] = None
 
 
+class InterviewSessionStartResponse(BaseModel):
+    session_id: UUID
+    question_text: str
+
+
 class InterviewSession(BaseModel):
     id: UUID
     user_id: UUID
@@ -38,5 +43,5 @@ class PromptContext(SQLModel):
     company_name: str
     resume_summary: str
     years_of_experience: int
-    key_skills: list[str]
+    key_skills: list[dict[str,str]]
     jd_highlights: str

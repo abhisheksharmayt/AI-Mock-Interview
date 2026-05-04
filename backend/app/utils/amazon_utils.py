@@ -23,6 +23,7 @@ class AmazonUtils:
     def upload_file_as_object(self, data, bucket_name: str, key: str) -> None:
         self.s3.upload_fileobj(data, bucket_name, key)
 
+
     def delete_object(self, bucket_name: str, key: str) -> None:
         """Remove an object; used to roll back uploads when DB persistence fails."""
         self.s3.delete_object(Bucket=bucket_name, Key=key)

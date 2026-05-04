@@ -9,10 +9,15 @@ PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 class PromptRenderer:
     def render(self, interview_type: InterviewType, context: PromptContext) -> str:
-        template = (PROMPTS_DIR / f"{interview_type.value}.txt").read_text(encoding="utf-8")
+        template = (PROMPTS_DIR / f"{interview_type.value}.txt").read_text(
+            encoding="utf-8"
+        )
 
         values = context.model_dump()
-        values["key_skills"] = ", ".join(values["key_skills"])
+        values["key_skills"] = ", ".join(
+            f"{s['name']} - ({s['level']})" if s.get("level") else s["name"]
+            for s in values["key_skills"]
+        )
 
         for key, value in values.items():
             template = template.replace("{{" + key + "}}", str(value))
@@ -20,4 +25,4 @@ class PromptRenderer:
         if "{{" in template:
             raise ValueError(f"Unfilled placeholders remain in prompt:\n{template}")
 
-        return template 
+        return template
