@@ -23,6 +23,7 @@ class InterviewSessionCreate(BaseModel):
 class InterviewSessionStartResponse(BaseModel):
     session_id: UUID
     question_text: str
+    audio_url: str
 
 
 class InterviewSession(BaseModel):

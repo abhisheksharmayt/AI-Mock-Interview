@@ -21,7 +21,8 @@ class AmazonUtils:
             )
 
     def upload_file_as_object(self, data, bucket_name: str, key: str) -> None:
-        self.s3.upload_fileobj(data, bucket_name, key)
+        file_obj = data if hasattr(data, "read") else BytesIO(data)
+        self.s3.upload_fileobj(file_obj, bucket_name, key)
 
 
     def delete_object(self, bucket_name: str, key: str) -> None:
@@ -31,3 +32,10 @@ class AmazonUtils:
     def download_file_as_bytes(self, bucket_name: str, key: str) -> bytes:
         response = self.s3.get_object(Bucket=bucket_name, Key=key)
         return response["Body"].read()
+
+    def generate_presigned_url(self, bucket_name: str, key: str, expiry: int = 3600) -> str:
+        return self.s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket_name, "Key": key},
+            ExpiresIn=expiry,
+        )

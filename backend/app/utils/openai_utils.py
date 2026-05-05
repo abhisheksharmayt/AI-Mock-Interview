@@ -117,6 +117,7 @@ def generate_interview_question(prompt: str, turns: list[dict]) -> str:
             ],
         )
         output_text = (response.output_text or "").strip()
+        logger.info(f"generated question : {output_text}")
         if not output_text:
             raise ValueError("OpenAI returned empty interview question")
         logger.info("Interview question generated")

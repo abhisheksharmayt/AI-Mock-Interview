@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from io import BytesIO
+import wave
 from cartesia import Cartesia
 from app.core.configs import configs
 from loguru import logger
@@ -23,10 +25,10 @@ class CartesiaSessionManager:
             connection = self.client.tts.websocket_connect().enter()
             ctx = connection.context(
                 model_id="sonic-3",
-                voice={"mode": "id", "id": "f786b574-daa5-4673-aa0c-cbe3e8534c02"},
+                voice={"mode": "id", "id": "3a8e6fea-81e5-4d4d-8755-86093146cdb8"},
                 output_format={
                     "container": "raw",
-                    "encoding": "pcm_f32le",
+                    "encoding": "pcm_s16le",
                     "sample_rate": 44100,
                 },
             )
@@ -56,7 +58,17 @@ class CartesiaSessionManager:
                         audio_chunks.append(response.audio)
                     elif response.type == "done":
                         break
-                return b"".join(audio_chunks)
+                return self._pcm_s16le_to_wav(b"".join(audio_chunks), sample_rate=44100)
         except Exception:
             logger.exception("Error while generating audio")
             raise
+
+    @staticmethod
+    def _pcm_s16le_to_wav(audio_bytes: bytes, sample_rate: int) -> bytes:
+        buffer = BytesIO()
+        with wave.open(buffer, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(audio_bytes)
+        return buffer.getvalue()

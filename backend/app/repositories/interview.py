@@ -39,15 +39,16 @@ class InterviewRepository:
 
     async def update_session_status(
         self, session_id: UUID, status: InterviewStatus
-    ) -> InterviewSession:
+    ) -> None:
         try:
             stmt = (
                 update(InterviewSessionModel)
                 .where(InterviewSessionModel.id == session_id)
                 .values(status=status)
             )
-            result = await self.db.execute(stmt)
-            return result.scalar_one_or_none()
+            await self.db.execute(stmt)
+            await self.db.commit()
         except Exception:
+            await self.db.rollback()
             logger.exception("Error while updating interview session status")
             raise
