@@ -3,7 +3,7 @@ from app.schemas.interview import InterviewSession, InterviewSessionCreate
 from app.common.enums import InterviewStatus
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
-from sqlalchemy import update
+from sqlalchemy import update, select
 from app.models.interview import InterviewSession as InterviewSessionModel
 
 
@@ -51,4 +51,15 @@ class InterviewRepository:
         except Exception:
             await self.db.rollback()
             logger.exception("Error while updating interview session status")
+            raise
+
+    async def get_interview_session(self, session_id: UUID):
+        try:
+            stmt = select(InterviewSessionModel).where(
+                InterviewSessionModel.id == session_id
+            )
+            result = await self.db.execute(stmt)
+            return result.scalar_one_or_none()
+        except Exception:
+            logger.exception("Error while retreiving session detail")
             raise

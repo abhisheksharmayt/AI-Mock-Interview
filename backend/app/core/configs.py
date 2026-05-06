@@ -10,6 +10,7 @@ class Configs(BaseSettings):
     S3_RESUME_BUCKET: str = "ai-interview-test"
     OPENAI_API_KEY: str = "default_openai_api_key"
     CARTESIA_API_KEY: str = "default_cartesia_api_key"
+    SARVAM_API_KEY: str = "default_sarvam_api_key"
 
 
 configs = Configs()

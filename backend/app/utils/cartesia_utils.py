@@ -6,10 +6,12 @@ from app.core.configs import configs
 from loguru import logger
 from threading import Lock
 
+
 @dataclass
 class CartesiaSessionState:
     connection: object
     ctx: object
+
 
 class CartesiaSessionManager:
     def __init__(self):
@@ -44,7 +46,7 @@ class CartesiaSessionManager:
                 return True
             return False
 
-    def text_to_speech(self, session_id: str, text: str)->bytes:
+    def text_to_speech(self, session_id: str, text: str) -> bytes:
         try:
             with self._lock:
                 state = self._sessions.get(session_id)

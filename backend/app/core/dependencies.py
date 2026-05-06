@@ -1,7 +1,7 @@
 from typing import Annotated
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, WebSocketException, status
 from jwt.exceptions import InvalidTokenError
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,6 @@ from app.db.database import get_db_session
 from app.repositories.user import UserRepository
 from app.schemas.auth import TokenData
 from app.services.authentication import oauth2_scheme
-
 
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
@@ -36,3 +35,19 @@ async def get_current_user(
         raise credentials_exception
     logger.info(f"User retrieved successfully: {user.email}")
     return user
+
+
+async def get_current_user_ws(token: str, db: AsyncSession):
+    try:
+        payload = jwt.decode(token, configs.JWT_SECRET_KEY, algorithms=[configs.ALGORITHM])
+        email = payload.get("email")
+        if email is None:
+            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+        user_repo = UserRepository(db)
+        user = await user_repo.get_user_by_email(email)
+        if user is None:
+            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+        logger.info(f"WS user verified: {user.email}")
+        return user
+    except InvalidTokenError:
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
