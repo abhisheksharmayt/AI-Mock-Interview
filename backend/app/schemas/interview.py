@@ -9,15 +9,9 @@ from sqlmodel import SQLModel
 class InterviewSessionCreate(BaseModel):
     resume_id: UUID
     job_description_id: UUID
-    template_id: Optional[UUID] = None
-    interviewer_type: InterviewerType = InterviewerType.ai
-    mode: InterviewMode = InterviewMode.voice
-    company_name: str
-    role: str
     interview_type: InterviewType
     question_count: int
     title: Optional[str] = None
-    interview_context_json: Optional[dict[str, Any]] = None
 
 
 class InterviewSessionStartResponse(BaseModel):

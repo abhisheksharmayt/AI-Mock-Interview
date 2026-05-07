@@ -98,15 +98,20 @@ async def interview_websocket(
                     await websocket.send_text(json.dumps({"type": "session_completed"}))
                     break
 
+                logger.info(f"Generating next question, turn {sequence_no}")
                 next_question = generate_interview_question(system_prompt, turns[-6:])
+                logger.info(f"Next question: {next_question[:80]}")
                 turns.append({"role": "assistant", "content": next_question})
 
+                logger.info("Generating TTS audio")
                 audio_key = f"interview_session_{session_id_str}/{sequence_no}.wav"
                 audio_bytes = cartesia.text_to_speech(session_id_str, next_question)
+                logger.info("Uploading audio to S3")
                 amazon.upload_file_as_object(audio_bytes, configs.S3_RESUME_BUCKET, audio_key)
                 audio_url = amazon.generate_presigned_url(configs.S3_RESUME_BUCKET, audio_key)
                 sequence_no += 1
 
+                logger.info(f"Sending ai_question to client")
                 await websocket.send_text(json.dumps({
                     "type": "ai_question",
                     "text": next_question,

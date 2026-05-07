@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Mock Interview Test</title>
+  <style>
+    body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; background: #f5f5f5; }
+    h2 { color: #333; }
+    .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+    input, select { width: 100%; padding: 8px; margin: 6px 0 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+    button { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+    #startBtn { background: #4CAF50; color: white; }
+    #startBtn:disabled { background: #aaa; }
+    #speakBtn { background: #2196F3; color: white; display: none; }
+    #speakBtn.recording { background: #f44336; }
+    .message { padding: 10px 14px; border-radius: 8px; margin: 8px 0; max-width: 85%; }
+    .ai { background: #e3f2fd; align-self: flex-start; }
+    .user { background: #e8f5e9; align-self: flex-end; margin-left: auto; }
+    .system { background: #fff3e0; font-style: italic; font-size: 13px; }
+    #chat { display: flex; flex-direction: column; min-height: 200px; }
+    #status { font-size: 13px; color: #666; margin-top: 8px; }
+    audio { width: 100%; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+<h2>Mock Interview Loop Tester</h2>
+
+<div class="card">
+  <b>Config</b>
+  <input id="apiBase" placeholder="API base URL" value="http://localhost:8000/api/v1" />
+  <input id="token" placeholder="JWT token (paste from login)" />
+  <input id="resumeId" placeholder="resume_id (UUID)" />
+  <input id="jdId" placeholder="job_description_id (UUID)" />
+  <select id="interviewType">
+    <option value="behavioral">Behavioral</option>
+    <option value="technical">Technical</option>
+    <option value="resume_based">Resume Based</option>
+  </select>
+  <input id="questionCount" placeholder="Number of questions" value="3" type="number" />
+  <button id="startBtn" onclick="startInterview()">Start Interview</button>
+  <div id="status">Fill in the fields and click Start.</div>
+</div>
+
+<div class="card">
+  <b>Interview</b>
+  <div id="chat"></div>
+  <button id="speakBtn" onmousedown="startRecording()" onmouseup="stopRecording()">
+    🎤 Hold to Speak
+  </button>
+</div>
+
+<script>
+  let ws = null;
+  let mediaRecorder = null;
+  let audioChunks = [];
+  let sessionId = null;
+
+  const FIELDS = ["apiBase", "token", "resumeId", "jdId", "interviewType", "questionCount"];
+
+  function saveToStorage() {
+    FIELDS.forEach(id => localStorage.setItem(id, document.getElementById(id).value));
+  }
+
+  function loadFromStorage() {
+    FIELDS.forEach(id => {
+      const val = localStorage.getItem(id);
+      if (val) document.getElementById(id).value = val;
+    });
+  }
+
+  window.onload = loadFromStorage;
+
+  function log(text, type = "system") {
+    const chat = document.getElementById("chat");
+    const div = document.createElement("div");
+    div.className = `message ${type}`;
+    div.textContent = text;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function setStatus(text) {
+    document.getElementById("status").textContent = text;
+  }
+
+  async function startInterview() {
+    const apiBase = document.getElementById("apiBase").value.trim();
+    const token = document.getElementById("token").value.trim();
+    const resumeId = document.getElementById("resumeId").value.trim();
+    const jdId = document.getElementById("jdId").value.trim();
+    const interviewType = document.getElementById("interviewType").value;
+    const questionCount = parseInt(document.getElementById("questionCount").value);
+
+    if (!token || !resumeId || !jdId) {
+      setStatus("Please fill in token, resume_id, and job_description_id.");
+      return;
+    }
+
+    saveToStorage();
+    document.getElementById("startBtn").disabled = true;
+    setStatus("Starting interview...");
+
+    try {
+      const res = await fetch(`${apiBase}/interview/start`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          resume_id: resumeId,
+          job_description_id: jdId,
+          interview_type: interviewType,
+          question_count: questionCount,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        setStatus(`Start failed: ${err}`);
+        document.getElementById("startBtn").disabled = false;
+        return;
+      }
+
+      const data = await res.json();
+      sessionId = data.session_id;
+
+      log(`Question 1: ${data.question_text}`, "ai");
+      playAudio(data.audio_url);
+      setStatus("Interview started. Listen to the question, then hold the button to answer.");
+
+      connectWebSocket(apiBase, token, sessionId);
+    } catch (e) {
+      setStatus(`Error: ${e.message}`);
+      document.getElementById("startBtn").disabled = false;
+    }
+  }
+
+  function connectWebSocket(apiBase, token, sessionId) {
+    const wsBase = apiBase.replace("http://", "ws://").replace("https://", "wss://");
+    ws = new WebSocket(`${wsBase}/interview/ws/${sessionId}?token=${token}`);
+
+    ws.onopen = async () => {
+      sharedMicStream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 } });
+      setStatus("Connected. Hold the button to speak.");
+      document.getElementById("speakBtn").style.display = "inline-block";
+    };
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+
+      if (msg.type === "transcript") {
+        log(`You: ${msg.text}`, "user");
+
+      } else if (msg.type === "ai_question") {
+        log(`AI: ${msg.text}`, "ai");
+        playAudio(msg.audio_url);
+        setStatus("Listen to the question, then hold the button to answer.");
+
+      } else if (msg.type === "no_speech_detected") {
+        setStatus("No speech detected. Try again.");
+        resetSpeakButton();
+
+      } else if (msg.type === "session_completed") {
+        log("Interview complete!", "system");
+        setStatus("Interview finished.");
+        document.getElementById("speakBtn").style.display = "none";
+        ws.close();
+
+      } else if (msg.type === "error") {
+        log(`Error: ${msg.message}`, "system");
+        setStatus("An error occurred. You can speak again or restart.");
+        resetSpeakButton();
+      }
+    };
+
+    ws.onerror = (e) => {
+      setStatus("WebSocket error. Check console.");
+      resetSpeakButton();
+    };
+    ws.onclose = () => {
+      setStatus("Disconnected.");
+      resetSpeakButton();
+      if (sharedMicStream) { sharedMicStream.getTracks().forEach(t => t.stop()); sharedMicStream = null; }
+      document.getElementById("startBtn").disabled = false;
+    };
+  }
+
+  let audioContext = null;
+  let scriptProcessor = null;
+  let micStream = null;
+  let pcmSamples = [];
+  let sharedMicStream = null;
+
+  async function startRecording() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    pcmSamples = [];
+    const btn = document.getElementById("speakBtn");
+    btn.classList.add("recording");
+    btn.textContent = "🔴 Recording...";
+    setStatus("Recording... release to send.");
+
+    micStream = sharedMicStream;
+    audioContext = new AudioContext({ sampleRate: 16000 });
+    await audioContext.resume();
+    const source = audioContext.createMediaStreamSource(micStream);
+    scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+
+    scriptProcessor.onaudioprocess = (e) => {
+      const samples = e.inputBuffer.getChannelData(0);
+      pcmSamples.push(new Float32Array(samples));
+    };
+
+    source.connect(scriptProcessor);
+    scriptProcessor.connect(audioContext.destination);
+  }
+
+  function stopRecording() {
+    if (!audioContext) return;
+
+    const btn = document.getElementById("speakBtn");
+    btn.classList.remove("recording");
+    btn.textContent = "🎤 Hold to Speak";
+    setStatus("Processing your answer...");
+
+    scriptProcessor.disconnect();
+    if (audioContext && audioContext.state !== "closed") audioContext.close();
+    audioContext = null;
+
+    const totalSamples = pcmSamples.reduce((s, c) => s + c.length, 0);
+    console.log(`Captured ${totalSamples} samples (${(totalSamples / 16000).toFixed(2)}s)`);
+    setStatus(`Captured ${(totalSamples / 16000).toFixed(2)}s of audio. Transcribing...`);
+
+    if (totalSamples === 0) {
+      setStatus("No audio captured. Check mic permissions.");
+      resetSpeakButton();
+      return;
+    }
+
+    const wavBytes = encodeWav(pcmSamples, 16000);
+    const base64 = bytesToBase64(wavBytes);
+
+    ws.send(JSON.stringify({ type: "audio_chunk", data: base64 }));
+    ws.send(JSON.stringify({ type: "end_utterance" }));
+
+    audioContext = null;
+    scriptProcessor = null;
+    pcmSamples = [];
+  }
+
+  function bytesToBase64(bytes) {
+    let binary = "";
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.slice(i, i + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  function encodeWav(chunks, sampleRate) {
+    const totalSamples = chunks.reduce((s, c) => s + c.length, 0);
+    const buffer = new ArrayBuffer(44 + totalSamples * 2);
+    const view = new DataView(buffer);
+
+    function writeStr(offset, str) {
+      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    }
+    function writeInt16(offset, val) { view.setInt16(offset, Math.max(-32768, Math.min(32767, val * 32767)), true); }
+
+    writeStr(0, "RIFF");
+    view.setUint32(4, 36 + totalSamples * 2, true);
+    writeStr(8, "WAVE");
+    writeStr(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);        // PCM
+    view.setUint16(22, 1, true);        // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, "data");
+    view.setUint32(40, totalSamples * 2, true);
+
+    let offset = 44;
+    for (const chunk of chunks) {
+      for (let i = 0; i < chunk.length; i++, offset += 2) {
+        writeInt16(offset, chunk[i]);
+      }
+    }
+    return new Uint8Array(buffer);
+  }
+
+  function resetSpeakButton() {
+    const btn = document.getElementById("speakBtn");
+    btn.classList.remove("recording");
+    btn.textContent = "🎤 Hold to Speak";
+    if (audioContext && audioContext.state !== "closed") { audioContext.close(); }
+    audioContext = null;
+    micStream = null;
+    scriptProcessor = null;
+    pcmSamples = [];
+    audioChunks = [];
+  }
+
+  function playAudio(url) {
+    const chat = document.getElementById("chat");
+    const audio = document.createElement("audio");
+    audio.src = url;
+    audio.controls = true;
+    audio.autoplay = true;
+    chat.appendChild(audio);
+    chat.scrollTop = chat.scrollHeight;
+  }
+</script>
+
+</body>
+</html>
