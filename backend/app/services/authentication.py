@@ -50,7 +50,7 @@ class AuthenticationService:
         if expires_delta:
             expire = datetime.now(timezone.utc) + expires_delta
         else:
-            expire = datetime.now(timezone.utc) + timedelta(days=1)
+            expire = datetime.now(timezone.utc) + timedelta(days=5)
         to_encode.update({"exp": expire})
         encoded_jwt = jwt.encode(to_encode, configs.JWT_SECRET_KEY, algorithm=configs.ALGORITHM)
         return encoded_jwt
