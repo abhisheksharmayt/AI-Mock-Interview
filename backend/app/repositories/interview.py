@@ -27,6 +27,7 @@ class InterviewRepository:
                 interview_type=interview_session.interview_type.value,
                 title=interview_session.title,
                 interview_context_json=interview_context_json,
+                question_count=interview_session.question_count,
             )
             self.db.add(session_model)
             await self.db.commit()

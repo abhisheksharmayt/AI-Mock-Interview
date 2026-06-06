@@ -1,12 +1,12 @@
 from app.schemas.openai import OpenAIResponse
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from app.core.configs import configs
 from loguru import logger
+from typing import AsyncGenerator
 
 
-client = OpenAI(
-    api_key=configs.OPENAI_API_KEY,
-)
+client = OpenAI(api_key=configs.OPENAI_API_KEY)
+async_client = AsyncOpenAI(api_key=configs.OPENAI_API_KEY)
 
 json_generator_prompt = """
 You are a resume parser. Extract structured information from the given resume text.
@@ -103,6 +103,43 @@ def parse_resume_with_ai(prompt: str) -> OpenAIResponse:
         return OpenAIResponse.model_validate_json(response.output_text)
     except Exception:
         logger.exception("Error while parsing resume with AI")
+        raise
+
+
+async def stream_interview_question(
+    prompt: str, turns: list[dict]
+) -> AsyncGenerator[str, None]:
+    """Streams LLM response and yields complete sentences as they arrive."""
+    try:
+        stream = await async_client.chat.completions.create(
+            model="gpt-5-mini",
+            messages=[{"role": "system", "content": prompt}, *turns],
+            stream=True,
+        )
+        buffer = ""
+        PUNCT = (". ", "! ", "? ", ".\n", "!\n", "?\n")
+        async for chunk in stream:
+            token = chunk.choices[0].delta.content or ""
+            buffer += token
+            while True:
+                earliest_idx = len(buffer)
+                split_at = -1
+                for p in PUNCT:
+                    idx = buffer.find(p)
+                    if idx != -1 and idx < earliest_idx:
+                        earliest_idx = idx
+                        split_at = idx + len(p)
+                if split_at > 0:
+                    sentence = buffer[:split_at].strip()
+                    buffer = buffer[split_at:]
+                    if sentence:
+                        yield sentence
+                else:
+                    break
+        if buffer.strip():
+            yield buffer.strip()
+    except Exception:
+        logger.exception("Error while streaming interview question")
         raise
 
 

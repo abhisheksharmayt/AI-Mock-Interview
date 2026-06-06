@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 from uuid import UUID
@@ -12,9 +13,8 @@ from app.common.enums import InterviewStatus
 from app.repositories.interview import InterviewRepository
 from app.schemas.interview import InterviewSessionCreate, InterviewSessionStartResponse
 from app.services.interveiw import InterviewService
-from app.utils.amazon_utils import AmazonUtils
 from app.utils.cartesia_utils import CartesiaSessionManager
-from app.utils.openai_utils import generate_interview_question
+from app.utils.openai_utils import stream_interview_question
 from app.utils.sarvam_utils import transcribe_audio
 from app.core.configs import configs
 
@@ -54,7 +54,6 @@ async def interview_websocket(
 
     session_id_str = str(session_id)
     cartesia = CartesiaSessionManager()
-    amazon = AmazonUtils()
 
     cartesia.get_or_create(session_id_str)
 
@@ -98,25 +97,25 @@ async def interview_websocket(
                     await websocket.send_text(json.dumps({"type": "session_completed"}))
                     break
 
-                logger.info(f"Generating next question, turn {sequence_no}")
-                next_question = generate_interview_question(system_prompt, turns[-6:])
-                logger.info(f"Next question: {next_question[:80]}")
-                turns.append({"role": "assistant", "content": next_question})
+                logger.info(f"Streaming next question, turn {sequence_no}")
+                full_question = ""
+                async for sentence in stream_interview_question(system_prompt, turns[-6:]):
+                    logger.info(f"Sentence: {sentence[:60]}")
+                    full_question += sentence + " "
+                    audio_bytes = await asyncio.to_thread(
+                        cartesia.text_to_speech, session_id_str, sentence
+                    )
+                    await websocket.send_text(json.dumps({
+                        "type": "ai_audio_chunk",
+                        "text": sentence,
+                        "data": base64.b64encode(audio_bytes).decode(),
+                    }))
 
-                logger.info("Generating TTS audio")
-                audio_key = f"interview_session_{session_id_str}/{sequence_no}.wav"
-                audio_bytes = cartesia.text_to_speech(session_id_str, next_question)
-                logger.info("Uploading audio to S3")
-                amazon.upload_file_as_object(audio_bytes, configs.S3_RESUME_BUCKET, audio_key)
-                audio_url = amazon.generate_presigned_url(configs.S3_RESUME_BUCKET, audio_key)
+                full_question = full_question.strip()
+                turns.append({"role": "assistant", "content": full_question})
                 sequence_no += 1
 
-                logger.info(f"Sending ai_question to client")
-                await websocket.send_text(json.dumps({
-                    "type": "ai_question",
-                    "text": next_question,
-                    "audio_url": audio_url,
-                }))
+                await websocket.send_text(json.dumps({"type": "ai_audio_done"}))
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for session {session_id_str}")

@@ -11,15 +11,25 @@
     button { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
     #startBtn { background: #4CAF50; color: white; }
     #startBtn:disabled { background: #aaa; }
-    #speakBtn { background: #2196F3; color: white; display: none; }
-    #speakBtn.recording { background: #f44336; }
     .message { padding: 10px 14px; border-radius: 8px; margin: 8px 0; max-width: 85%; }
     .ai { background: #e3f2fd; align-self: flex-start; }
     .user { background: #e8f5e9; align-self: flex-end; margin-left: auto; }
     .system { background: #fff3e0; font-style: italic; font-size: 13px; }
     #chat { display: flex; flex-direction: column; min-height: 200px; }
-    #status { font-size: 13px; color: #666; margin-top: 8px; }
+    #status { font-size: 13px; color: #666; margin-top: 12px; min-height: 20px; }
     audio { width: 100%; margin-top: 8px; }
+    #vadIndicator {
+      display: none;
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      text-align: center;
+    }
+    #vadIndicator.listening { display: block; background: #e8f5e9; color: #2e7d32; }
+    #vadIndicator.speaking  { display: block; background: #ffebee; color: #c62828; }
+    #vadIndicator.ai-turn   { display: block; background: #e3f2fd; color: #1565c0; }
+    #vadIndicator.processing { display: block; background: #fff3e0; color: #e65100; }
   </style>
 </head>
 <body>
@@ -45,32 +55,45 @@
 <div class="card">
   <b>Interview</b>
   <div id="chat"></div>
-  <button id="speakBtn" onmousedown="startRecording()" onmouseup="stopRecording()">
-    🎤 Hold to Speak
-  </button>
+  <div id="vadIndicator"></div>
 </div>
 
 <script>
+  // ── State ────────────────────────────────────────────────────────────────
   let ws = null;
-  let mediaRecorder = null;
-  let audioChunks = [];
   let sessionId = null;
+  let sharedMicStream = null;
 
+  // AI message streaming
+  let currentAiText = "";
+  let currentAiMsgEl = null;
+
+  // Audio queue for streaming TTS chunks
+  let audioQueue = [];
+  let isPlayingQueue = false;
+
+  // VAD / recording
+  let audioContext = null;
+  let analyser = null;
+  let scriptProcessor = null;
+  let pcmSamples = [];
+  let vadInterval = null;
+  let isSpeaking = false;
+  let silenceFrames = 0;
+  let aiTurn = false;          // true while AI audio is playing
+
+  const SILENCE_THRESHOLD = 0.015;      // RMS below this = silence
+  const SILENCE_FRAMES_NEEDED = 20;     // ~0.8s of silence before auto-stop
+  const MIN_SPEECH_SAMPLES = 16000;     // ignore utterances shorter than 1s
+  const MAX_SPEECH_SAMPLES = 16000 * 25; // hard cap at 25s to stay under Sarvam's 30s limit
+
+  // ── Persistence ─────────────────────────────────────────────────────────
   const FIELDS = ["apiBase", "token", "resumeId", "jdId", "interviewType", "questionCount"];
-
-  function saveToStorage() {
-    FIELDS.forEach(id => localStorage.setItem(id, document.getElementById(id).value));
-  }
-
-  function loadFromStorage() {
-    FIELDS.forEach(id => {
-      const val = localStorage.getItem(id);
-      if (val) document.getElementById(id).value = val;
-    });
-  }
-
+  function saveToStorage() { FIELDS.forEach(id => localStorage.setItem(id, document.getElementById(id).value)); }
+  function loadFromStorage() { FIELDS.forEach(id => { const v = localStorage.getItem(id); if (v) document.getElementById(id).value = v; }); }
   window.onload = loadFromStorage;
 
+  // ── UI helpers ───────────────────────────────────────────────────────────
   function log(text, type = "system") {
     const chat = document.getElementById("chat");
     const div = document.createElement("div");
@@ -80,22 +103,24 @@
     chat.scrollTop = chat.scrollHeight;
   }
 
-  function setStatus(text) {
-    document.getElementById("status").textContent = text;
+  function setStatus(text) { document.getElementById("status").textContent = text; }
+
+  function setIndicator(state, text) {
+    const el = document.getElementById("vadIndicator");
+    el.className = `vadIndicator ${state}`;
+    el.textContent = text;
   }
 
+  // ── Start interview ──────────────────────────────────────────────────────
   async function startInterview() {
     const apiBase = document.getElementById("apiBase").value.trim();
-    const token = document.getElementById("token").value.trim();
+    const token   = document.getElementById("token").value.trim();
     const resumeId = document.getElementById("resumeId").value.trim();
-    const jdId = document.getElementById("jdId").value.trim();
-    const interviewType = document.getElementById("interviewType").value;
-    const questionCount = parseInt(document.getElementById("questionCount").value);
+    const jdId    = document.getElementById("jdId").value.trim();
+    const interviewType  = document.getElementById("interviewType").value;
+    const questionCount  = parseInt(document.getElementById("questionCount").value);
 
-    if (!token || !resumeId || !jdId) {
-      setStatus("Please fill in token, resume_id, and job_description_id.");
-      return;
-    }
+    if (!token || !resumeId || !jdId) { setStatus("Please fill in token, resume_id, and job_description_id."); return; }
 
     saveToStorage();
     document.getElementById("startBtn").disabled = true;
@@ -104,16 +129,8 @@
     try {
       const res = await fetch(`${apiBase}/interview/start`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          resume_id: resumeId,
-          job_description_id: jdId,
-          interview_type: interviewType,
-          question_count: questionCount,
-        }),
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ resume_id: resumeId, job_description_id: jdId, interview_type: interviewType, question_count: questionCount }),
       });
 
       if (!res.ok) {
@@ -125,10 +142,8 @@
 
       const data = await res.json();
       sessionId = data.session_id;
-
-      log(`Question 1: ${data.question_text}`, "ai");
-      playAudio(data.audio_url);
-      setStatus("Interview started. Listen to the question, then hold the button to answer.");
+      log(`AI: ${data.question_text}`, "ai");
+      await playAudioAndWait(data.audio_url);
 
       connectWebSocket(apiBase, token, sessionId);
     } catch (e) {
@@ -137,119 +152,215 @@
     }
   }
 
+  // ── WebSocket ────────────────────────────────────────────────────────────
   function connectWebSocket(apiBase, token, sessionId) {
     const wsBase = apiBase.replace("http://", "ws://").replace("https://", "wss://");
     ws = new WebSocket(`${wsBase}/interview/ws/${sessionId}?token=${token}`);
 
     ws.onopen = async () => {
       sharedMicStream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 } });
-      setStatus("Connected. Hold the button to speak.");
-      document.getElementById("speakBtn").style.display = "inline-block";
+      startVAD();
     };
 
-    ws.onmessage = (event) => {
+    ws.onmessage = async (event) => {
       const msg = JSON.parse(event.data);
 
       if (msg.type === "transcript") {
         log(`You: ${msg.text}`, "user");
+        setIndicator("processing", "⏳ AI is thinking...");
+        aiTurn = true;
+        currentAiText = "";
 
-      } else if (msg.type === "ai_question") {
-        log(`AI: ${msg.text}`, "ai");
-        playAudio(msg.audio_url);
-        setStatus("Listen to the question, then hold the button to answer.");
+      } else if (msg.type === "ai_audio_chunk") {
+        if (currentAiText === "") {
+          setIndicator("ai-turn", "🔊 AI is speaking...");
+        }
+        currentAiText += (currentAiText ? " " : "") + msg.text;
+        updateAiMessage(currentAiText);
+        enqueueAudio(msg.data);
+
+      } else if (msg.type === "ai_audio_done") {
+        currentAiMsgEl = null;
+        // Wait for audio queue to drain before re-enabling listening
+        const waitForQueue = () => {
+          if (!isPlayingQueue && audioQueue.length === 0) {
+            aiTurn = false;
+            setIndicator("listening", "🎙 Listening...");
+          } else {
+            setTimeout(waitForQueue, 100);
+          }
+        };
+        waitForQueue();
 
       } else if (msg.type === "no_speech_detected") {
-        setStatus("No speech detected. Try again.");
-        resetSpeakButton();
+        aiTurn = false;
+        setIndicator("listening", "🎙 No speech detected. Speak clearly.");
 
       } else if (msg.type === "session_completed") {
+        currentAiMsgEl = null;
         log("Interview complete!", "system");
         setStatus("Interview finished.");
-        document.getElementById("speakBtn").style.display = "none";
+        setIndicator("", "");
+        stopVAD();
         ws.close();
 
       } else if (msg.type === "error") {
+        currentAiMsgEl = null;
         log(`Error: ${msg.message}`, "system");
-        setStatus("An error occurred. You can speak again or restart.");
-        resetSpeakButton();
+        aiTurn = false;
+        setIndicator("listening", "🎙 Listening...");
       }
     };
 
-    ws.onerror = (e) => {
-      setStatus("WebSocket error. Check console.");
-      resetSpeakButton();
-    };
+    ws.onerror = () => { setStatus("WebSocket error."); stopVAD(); };
     ws.onclose = () => {
       setStatus("Disconnected.");
-      resetSpeakButton();
+      stopVAD();
       if (sharedMicStream) { sharedMicStream.getTracks().forEach(t => t.stop()); sharedMicStream = null; }
       document.getElementById("startBtn").disabled = false;
     };
   }
 
-  let audioContext = null;
-  let scriptProcessor = null;
-  let micStream = null;
-  let pcmSamples = [];
-  let sharedMicStream = null;
+  // ── AI message helpers ───────────────────────────────────────────────────
+  function updateAiMessage(text) {
+    if (!currentAiMsgEl) {
+      currentAiMsgEl = document.createElement("div");
+      currentAiMsgEl.className = "message ai";
+      document.getElementById("chat").appendChild(currentAiMsgEl);
+    }
+    currentAiMsgEl.textContent = `AI: ${text}`;
+    const chat = document.getElementById("chat");
+    chat.scrollTop = chat.scrollHeight;
+  }
 
-  async function startRecording() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  // ── Audio queue ──────────────────────────────────────────────────────────
+  function base64ToBytes(b64) {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
 
-    pcmSamples = [];
-    const btn = document.getElementById("speakBtn");
-    btn.classList.add("recording");
-    btn.textContent = "🔴 Recording...";
-    setStatus("Recording... release to send.");
+  function enqueueAudio(b64) {
+    audioQueue.push(b64);
+    if (!isPlayingQueue) playNextChunk();
+  }
 
-    micStream = sharedMicStream;
+  async function playNextChunk() {
+    if (audioQueue.length === 0) {
+      isPlayingQueue = false;
+      return;
+    }
+    isPlayingQueue = true;
+    const b64 = audioQueue.shift();
+    const bytes = base64ToBytes(b64);
+    const blob = new Blob([bytes], { type: "audio/wav" });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.onended = () => { URL.revokeObjectURL(url); playNextChunk(); };
+    audio.onerror = () => { URL.revokeObjectURL(url); playNextChunk(); };
+    try { await audio.play(); } catch (e) { playNextChunk(); }
+  }
+
+  // ── VAD ──────────────────────────────────────────────────────────────────
+  function startVAD() {
     audioContext = new AudioContext({ sampleRate: 16000 });
-    await audioContext.resume();
-    const source = audioContext.createMediaStreamSource(micStream);
+    audioContext.resume();
+
+    const source = audioContext.createMediaStreamSource(sharedMicStream);
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 512;
     scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
 
     scriptProcessor.onaudioprocess = (e) => {
+      if (aiTurn) return;
       const samples = e.inputBuffer.getChannelData(0);
-      pcmSamples.push(new Float32Array(samples));
+
+      // RMS energy
+      const rms = Math.sqrt(samples.reduce((s, v) => s + v * v, 0) / samples.length);
+
+      if (rms > SILENCE_THRESHOLD) {
+        silenceFrames = 0;
+        if (!isSpeaking) {
+          isSpeaking = true;
+          pcmSamples = [];
+          setIndicator("speaking", "🔴 Speaking...");
+        }
+        pcmSamples.push(new Float32Array(samples));
+
+        // hard cap — flush before hitting Sarvam's 30s limit
+        const totalSamples = pcmSamples.reduce((s, c) => s + c.length, 0);
+        if (totalSamples >= MAX_SPEECH_SAMPLES) {
+          isSpeaking = false;
+          silenceFrames = 0;
+          flushUtterance();
+        }
+      } else if (isSpeaking) {
+        pcmSamples.push(new Float32Array(samples));
+        silenceFrames++;
+        if (silenceFrames >= SILENCE_FRAMES_NEEDED) {
+          isSpeaking = false;
+          silenceFrames = 0;
+          flushUtterance();
+        }
+      }
     };
 
+    source.connect(analyser);
     source.connect(scriptProcessor);
     scriptProcessor.connect(audioContext.destination);
+
+    setIndicator("listening", "🎙 Listening...");
+    setStatus("Interview in progress. Just speak naturally.");
   }
 
-  function stopRecording() {
-    if (!audioContext) return;
-
-    const btn = document.getElementById("speakBtn");
-    btn.classList.remove("recording");
-    btn.textContent = "🎤 Hold to Speak";
-    setStatus("Processing your answer...");
-
-    scriptProcessor.disconnect();
-    if (audioContext && audioContext.state !== "closed") audioContext.close();
+  function stopVAD() {
+    if (scriptProcessor) { scriptProcessor.disconnect(); scriptProcessor = null; }
+    if (audioContext && audioContext.state !== "closed") { audioContext.close(); }
     audioContext = null;
+    analyser = null;
+    isSpeaking = false;
+    silenceFrames = 0;
+    pcmSamples = [];
+    audioQueue = [];
+    isPlayingQueue = false;
+    currentAiMsgEl = null;
+  }
 
+  function flushUtterance() {
     const totalSamples = pcmSamples.reduce((s, c) => s + c.length, 0);
-    console.log(`Captured ${totalSamples} samples (${(totalSamples / 16000).toFixed(2)}s)`);
-    setStatus(`Captured ${(totalSamples / 16000).toFixed(2)}s of audio. Transcribing...`);
-
-    if (totalSamples === 0) {
-      setStatus("No audio captured. Check mic permissions.");
-      resetSpeakButton();
+    if (totalSamples < MIN_SPEECH_SAMPLES) {
+      setIndicator("listening", "🎙 Listening...");
       return;
     }
 
+    setIndicator("processing", "⏳ Processing your answer...");
+    aiTurn = true;
+
     const wavBytes = encodeWav(pcmSamples, 16000);
     const base64 = bytesToBase64(wavBytes);
+    pcmSamples = [];
 
     ws.send(JSON.stringify({ type: "audio_chunk", data: base64 }));
     ws.send(JSON.stringify({ type: "end_utterance" }));
-
-    audioContext = null;
-    scriptProcessor = null;
-    pcmSamples = [];
   }
 
+  // ── Audio playback ───────────────────────────────────────────────────────
+  function playAudioAndWait(url) {
+    return new Promise((resolve) => {
+      const chat = document.getElementById("chat");
+      const audio = document.createElement("audio");
+      audio.src = url;
+      audio.controls = true;
+      audio.autoplay = true;
+      audio.onended = resolve;
+      audio.onerror = resolve; // don't block on error
+      chat.appendChild(audio);
+      chat.scrollTop = chat.scrollHeight;
+    });
+  }
+
+  // ── Audio encoding ───────────────────────────────────────────────────────
   function bytesToBase64(bytes) {
     let binary = "";
     const chunkSize = 8192;
@@ -264,9 +375,7 @@
     const buffer = new ArrayBuffer(44 + totalSamples * 2);
     const view = new DataView(buffer);
 
-    function writeStr(offset, str) {
-      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
-    }
+    function writeStr(offset, str) { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); }
     function writeInt16(offset, val) { view.setInt16(offset, Math.max(-32768, Math.min(32767, val * 32767)), true); }
 
     writeStr(0, "RIFF");
@@ -274,8 +383,8 @@
     writeStr(8, "WAVE");
     writeStr(12, "fmt ");
     view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);        // PCM
-    view.setUint16(22, 1, true);        // mono
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
     view.setUint32(24, sampleRate, true);
     view.setUint32(28, sampleRate * 2, true);
     view.setUint16(32, 2, true);
@@ -290,28 +399,6 @@
       }
     }
     return new Uint8Array(buffer);
-  }
-
-  function resetSpeakButton() {
-    const btn = document.getElementById("speakBtn");
-    btn.classList.remove("recording");
-    btn.textContent = "🎤 Hold to Speak";
-    if (audioContext && audioContext.state !== "closed") { audioContext.close(); }
-    audioContext = null;
-    micStream = null;
-    scriptProcessor = null;
-    pcmSamples = [];
-    audioChunks = [];
-  }
-
-  function playAudio(url) {
-    const chat = document.getElementById("chat");
-    const audio = document.createElement("audio");
-    audio.src = url;
-    audio.controls = true;
-    audio.autoplay = true;
-    chat.appendChild(audio);
-    chat.scrollTop = chat.scrollHeight;
   }
 </script>
 
